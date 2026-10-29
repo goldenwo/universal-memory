@@ -1,0 +1,2276 @@
+{
+  "timestamp": "2026-10-27T02:23:18.129Z",
+  "suite": "J-sg",
+  "judgeProvider": "openai",
+  "judgeModel": "gpt-6-luna",
+  "embeddingModel": "text-embedding-3-small",
+  "floor": 0.84,
+  "ceiling": 1,
+  "runs": 1,
+  "judgeThreshold": 0,
+  "fixtureSha256": {
+    "eval/held-out-contradiction-set.jsonl": "b25487f00fbe07701b9093d9db26450ca48deb66bec749a915ec27b600bbeac4",
+    "eval/over-supersession-set.jsonl": "61ffda4ce2cf0c428af9e3f20065b8e656a4880167d8316a6c23a8d872b7c2d9",
+    "test/fixtures/dedup-labels.json": "84fb27c0066b5e293b25887f5a65712849f250af77a9391d9f6da49542033132"
+  },
+  "inBandRef": "eval/results/2026-06-19-supersession-gate-eval-ceil1.json",
+  "integrity": {
+    "ok": true,
+    "missing": [],
+    "extra": []
+  },
+  "perRow": [
+    {
+      "id": "ho01",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8512,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts make present-tense claims about the same message queue, naming different systems.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1140.0410999999995
+        }
+      ],
+      "older": "Our message queue is Kafka",
+      "newer": "Our message queue is RabbitMQ"
+    },
+    {
+      "id": "ho02",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8572,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts describe the cache layer in the present tense and specify different cache systems.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1156.1748000000007
+        }
+      ],
+      "older": "The cache layer uses Redis",
+      "newer": "The cache layer uses Memcached"
+    },
+    {
+      "id": "ho03",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8014,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our CI runs on Jenkins",
+      "newer": "Our CI runs on CircleCI"
+    },
+    {
+      "id": "ho04",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7676,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The frontend bundler is Webpack",
+      "newer": "The frontend bundler is Vite"
+    },
+    {
+      "id": "ho05",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7013,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our ORM is Prisma",
+      "newer": "Our ORM is TypeORM"
+    },
+    {
+      "id": "ho06",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7038,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The app is hosted on Vercel",
+      "newer": "The app is hosted on Netlify"
+    },
+    {
+      "id": "ho07",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8172,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our primary backend language is Java",
+      "newer": "Our primary backend language is Kotlin"
+    },
+    {
+      "id": "ho08",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.9209,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the daily standup's time in the present tense, and 9am conflicts with 11am.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 986.1745999999994
+        }
+      ],
+      "older": "Our daily standup is at 9am",
+      "newer": "Our daily standup is at 11am"
+    },
+    {
+      "id": "ho09",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.8835,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the desk’s current floor, and the floors differ.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 988.5374000000002
+        }
+      ],
+      "older": "My desk is on the third floor",
+      "newer": "My desk is on the eighth floor"
+    },
+    {
+      "id": "ho10",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "finance",
+      "cosine": 0.8488,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the same present-tense status, and the main credit card cannot be both Visa and Mastercard.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1336.7739000000001
+        }
+      ],
+      "older": "My main credit card is a Visa",
+      "newer": "My main credit card is a Mastercard"
+    },
+    {
+      "id": "ho11",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "health",
+      "cosine": 0.7225,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My physician is Dr. Patel",
+      "newer": "My physician is Dr. Nguyen"
+    },
+    {
+      "id": "ho12",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "travel",
+      "cosine": 0.812,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My layover is in Dubai",
+      "newer": "My layover is in Doha"
+    },
+    {
+      "id": "ho13",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "food",
+      "cosine": 0.8279,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My go-to cuisine is Thai",
+      "newer": "My go-to cuisine is Mexican"
+    },
+    {
+      "id": "ho14",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "pets",
+      "cosine": 0.6059,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My cat is named Max",
+      "newer": "My cat is named Cooper"
+    },
+    {
+      "id": "ho15",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "contact",
+      "cosine": 0.65,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My area code is 415",
+      "newer": "My area code is 312"
+    },
+    {
+      "id": "ho16",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.767,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The public API uses GraphQL",
+      "newer": "The public API uses REST"
+    },
+    {
+      "id": "ho17",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8229,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The service listens on port 8080",
+      "newer": "The service listens on port 9090"
+    },
+    {
+      "id": "ho18",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.9372,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.97,
+          "reasoning": "Both state the current sprint duration, and two weeks conflicts with three weeks.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1243.0142000000005
+        }
+      ],
+      "older": "Our sprint is two weeks long",
+      "newer": "Our sprint is three weeks long"
+    },
+    {
+      "id": "ho19",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "finance",
+      "cosine": 0.9029,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.93,
+          "reasoning": "Both facts state the current monthly rent, but give different amounts.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 985.1023000000005
+        }
+      ],
+      "older": "My monthly rent is 1800 dollars",
+      "newer": "My monthly rent is 2400 dollars"
+    },
+    {
+      "id": "ho20",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.89,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.97,
+          "reasoning": "Both state the server's current RAM capacity, and 16 GB conflicts with 64 GB.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 989.0190999999995
+        }
+      ],
+      "older": "The server has 16 gigabytes of RAM",
+      "newer": "The server has 64 gigabytes of RAM"
+    },
+    {
+      "id": "ho21",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.8608,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both state the project deadline without indicating different time periods; the newer date invalidates the older deadline.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1276.9062000000004
+        }
+      ],
+      "older": "The project deadline is March 15th",
+      "newer": "The project deadline is April 20th"
+    },
+    {
+      "id": "ho22",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "travel",
+      "cosine": 0.7797,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My seat number is 14A",
+      "newer": "My seat number is 22F"
+    },
+    {
+      "id": "ho23",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "health",
+      "cosine": 0.8184,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My appointment is at 2pm",
+      "newer": "My appointment is at 4pm"
+    },
+    {
+      "id": "ho24",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "contact",
+      "cosine": 0.824,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My phone extension is 4421",
+      "newer": "My phone extension is 7789"
+    },
+    {
+      "id": "ho25",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "home",
+      "cosine": 0.8856,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the current number of bedrooms, and two conflicts with three.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1315.1403
+        }
+      ],
+      "older": "I have two bedrooms",
+      "newer": "I have three bedrooms"
+    },
+    {
+      "id": "ho26",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.9139,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the request timeout as a present value, and 30 seconds conflicts with 60 seconds.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1060.478
+        }
+      ],
+      "older": "The request timeout is 30 seconds",
+      "newer": "The request timeout is 60 seconds"
+    },
+    {
+      "id": "ho27",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.896,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts state the connection pool size in the same present-time frame, with incompatible values.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1171.9076000000005
+        }
+      ],
+      "older": "The connection pool size is 10",
+      "newer": "The connection pool size is 50"
+    },
+    {
+      "id": "ho28",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.8958,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both state the Node.js version currently used in production, and Node.js 18 and 22 cannot both be the same production runtime version.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1391.3302000000003
+        }
+      ],
+      "older": "We run Node.js 18 in production",
+      "newer": "We run Node.js 22 in production"
+    },
+    {
+      "id": "ho29",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "finance",
+      "cosine": 0.8996,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts state the current 401k contribution rate, and 6 percent conflicts with 10 percent.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1094.2483000000002
+        }
+      ],
+      "older": "My 401k contribution is 6 percent",
+      "newer": "My 401k contribution is 10 percent"
+    },
+    {
+      "id": "ho30",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "work",
+      "cosine": 0.8708,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts describe the team's current full-time membership, but give different counts.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 962.2078000000001
+        }
+      ],
+      "older": "Our engineering team has 8 full-time members",
+      "newer": "Our engineering team has 20 full-time members"
+    },
+    {
+      "id": "ho31",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "home",
+      "cosine": 0.903,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the thermostat’s current setting, and 68 and 72 degrees cannot both be the setting at the same time.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1378.6558000000005
+        }
+      ],
+      "older": "My thermostat is set to 68 degrees",
+      "newer": "My thermostat is set to 72 degrees"
+    },
+    {
+      "id": "ho32",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.8968,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts state the API's current version, and v2 conflicts with v3.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1039.6083000000008
+        }
+      ],
+      "older": "The API version is v2",
+      "newer": "The API version is v3"
+    },
+    {
+      "id": "ho33",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8882,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the current primary datastore for all services, and the newer explicitly replaces DynamoDB with Postgres.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1420.7330999999995
+        }
+      ],
+      "older": "Our primary datastore is DynamoDB for all services",
+      "newer": "Our primary datastore is Postgres for all services, not DynamoDB"
+    },
+    {
+      "id": "ho34",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8487,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the checkout service’s current implementation, and the newer fact explicitly rules out Ruby.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1026.7787999999991
+        }
+      ],
+      "older": "The checkout service is written in Ruby",
+      "newer": "The checkout service is written in Go, not Ruby"
+    },
+    {
+      "id": "ho35",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8889,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the same current default branch name, and the newer fact explicitly rules out the older name.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1364.4474999999993
+        }
+      ],
+      "older": "The default branch is called master",
+      "newer": "The default branch is called main, not master"
+    },
+    {
+      "id": "ho36",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "work",
+      "cosine": 0.8554,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the current location of the main office, and the newer fact explicitly rules out the downtown tower.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1329.2851
+        }
+      ],
+      "older": "Our main office is located in the downtown tower",
+      "newer": "Our main office is located in the riverside tower, not the downtown tower"
+    },
+    {
+      "id": "ho37",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8524,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts describe how users sign in to the platform; the newer explicitly says passkeys, not passwords, invalidating the older claim.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1245.4436000000005
+        }
+      ],
+      "older": "Users sign in to the platform with passwords",
+      "newer": "Users sign in to the platform with passkeys, not passwords"
+    },
+    {
+      "id": "ho38",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "finance",
+      "cosine": 0.9051,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the current schedule for the same base salary, and the newer explicitly rules out monthly pay.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1011.2250000000004
+        }
+      ],
+      "older": "My base salary is paid on a monthly schedule",
+      "newer": "My base salary is paid on a biweekly schedule, not monthly"
+    },
+    {
+      "id": "ho39",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8408,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both describe the same present communication method, and the newer fact explicitly rules out REST.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1261.6418999999987
+        }
+      ],
+      "older": "The frontend talks to the backend over REST",
+      "newer": "The frontend talks to the backend over gRPC, not REST"
+    },
+    {
+      "id": "ho40",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "health",
+      "cosine": 0.8556,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the current medication routine, and the newer explicitly negates taking it in the morning.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1068.1395999999986
+        }
+      ],
+      "older": "I take my medication in the morning",
+      "newer": "I take my medication at night, not in the morning"
+    },
+    {
+      "id": "ho41",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.9396,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts state the current API rate limit, and the limits differ.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1178.3927999999996
+        }
+      ],
+      "older": "The API rate limit is 100 requests per minute",
+      "newer": "The API rate limit is 500 requests per minute"
+    },
+    {
+      "id": "ho42",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.9096,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the current primary cloud region, and the regions differ.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1089.2835999999988
+        }
+      ],
+      "older": "Our primary cloud region is us-east-1",
+      "newer": "Our primary cloud region is eu-west-1"
+    },
+    {
+      "id": "os001",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.9087,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "These are different certifications, and holding one does not logically exclude holding the other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1214.7638000000006
+        }
+      ],
+      "older": "I hold the AWS Solutions Architect certification",
+      "newer": "I hold the AWS Developer certification"
+    },
+    {
+      "id": "os002",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8604,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Supporting dark mode does not invalidate supporting light mode; the app can support both.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 935.6650000000009
+        }
+      ],
+      "older": "Our app supports light mode",
+      "newer": "Our app supports dark mode"
+    },
+    {
+      "id": "os003",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8484,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts assert the app's current platform, and iOS and Android conflict.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1041.3467
+        }
+      ],
+      "older": "The app runs on iOS",
+      "newer": "The app runs on Android"
+    },
+    {
+      "id": "os004",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8351,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "We operate in the us-east-1 region",
+      "newer": "We operate in the eu-west-1 region"
+    },
+    {
+      "id": "os005",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.8873,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Holding the AWS SysOps Administrator certification does not invalidate also holding the AWS Solutions Architect certification.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1223.1921000000002
+        }
+      ],
+      "older": "I hold the AWS Solutions Architect certification",
+      "newer": "I hold the AWS SysOps Administrator certification"
+    },
+    {
+      "id": "os006",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.8795,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "Being open on weekdays and being open on weekends are compatible; the store may be open on both.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1189.1234000000004
+        }
+      ],
+      "older": "The store is open on weekdays",
+      "newer": "The store is open on weekends"
+    },
+    {
+      "id": "os007",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8301,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Reports can be exported as PDF",
+      "newer": "Reports can be exported as CSV"
+    },
+    {
+      "id": "os008",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "dev",
+      "cosine": 0.9456,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "The newer fact adds integration tests without negating the claim that the pipeline runs unit tests.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1091.8950999999997
+        }
+      ],
+      "older": "Our CI pipeline runs unit tests",
+      "newer": "Our CI pipeline runs unit tests and integration tests"
+    },
+    {
+      "id": "os009",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "dev",
+      "cosine": 0.9038,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "The newer fact adds Kubernetes without negating the use of Docker; both deployment methods can be used.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 975.5061000000005
+        }
+      ],
+      "older": "We deploy the service with Docker",
+      "newer": "We deploy the service with Docker and Kubernetes"
+    },
+    {
+      "id": "os010",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "personal",
+      "cosine": 0.8609,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "The newer fact adds learning the violin without invalidating the claim that the person is learning piano.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1150.7309999999998
+        }
+      ],
+      "older": "I'm learning to play the piano",
+      "newer": "I'm learning to play the piano and the violin"
+    },
+    {
+      "id": "os011",
+      "kind": "decline",
+      "group": "restatement-duplicate",
+      "lane": "dev",
+      "cosine": 0.8621,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts affirm that PostgreSQL is the production database.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1013.6121999999996
+        }
+      ],
+      "older": "Our production database is PostgreSQL",
+      "newer": "PostgreSQL is our production database"
+    },
+    {
+      "id": "os012",
+      "kind": "decline",
+      "group": "restatement-duplicate",
+      "lane": "dev",
+      "cosine": 0.9084,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts assert the same thing in the present tense; the newer fact restates rather than invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1035.1035999999986
+        }
+      ],
+      "older": "The cache layer uses Redis",
+      "newer": "We use Redis for the cache layer"
+    },
+    {
+      "id": "os013",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "finance",
+      "cosine": 0.8061,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I have a Visa card on file",
+      "newer": "I have a Mastercard card on file"
+    },
+    {
+      "id": "os014",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "personal",
+      "cosine": 0.7907,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I am fluent in Spanish",
+      "newer": "I am fluent in Portuguese"
+    },
+    {
+      "id": "os015",
+      "kind": "decline",
+      "group": "different-attribute-same-subject",
+      "lane": "dev",
+      "cosine": 0.7164,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our production database is PostgreSQL",
+      "newer": "Our production database stores about 2 terabytes of data"
+    },
+    {
+      "id": "os016",
+      "kind": "decline",
+      "group": "different-subject-same-structure",
+      "lane": "dev",
+      "cosine": 0.6332,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The frontend is built with React",
+      "newer": "The backend is built with Go"
+    },
+    {
+      "id": "os017",
+      "kind": "boundary",
+      "group": "version-upgrade",
+      "lane": "dev",
+      "cosine": 0.8423,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.98,
+          "reasoning": "Both facts describe the production PostgreSQL version in the present tense, and the versions differ.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1155.8220000000001
+        }
+      ],
+      "older": "We run PostgreSQL 14 in production",
+      "newer": "We run PostgreSQL 16 in production"
+    },
+    {
+      "id": "os018",
+      "kind": "boundary",
+      "group": "version-upgrade",
+      "lane": "dev",
+      "cosine": 0.9111,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the app’s current target iOS version, and iOS 17 supersedes the incompatible iOS 16 target.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1327.2738000000008
+        }
+      ],
+      "older": "The mobile app targets iOS 16",
+      "newer": "The mobile app targets iOS 17"
+    },
+    {
+      "id": "os019",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8059,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "We support payments in USD",
+      "newer": "We support payments in EUR"
+    },
+    {
+      "id": "os020",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.7324,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our SDK is available for Python",
+      "newer": "Our SDK is available for Ruby"
+    },
+    {
+      "id": "os021",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "contact",
+      "cosine": 0.7176,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I'm reachable on Signal",
+      "newer": "I'm reachable on WhatsApp"
+    },
+    {
+      "id": "os022",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.9632,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.93,
+          "reasoning": "Both facts make present-tense claims about the venue’s parking location, and north and south conflict.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1082.4094000000005
+        }
+      ],
+      "older": "The venue has parking on the north side",
+      "newer": "The venue has parking on the south side"
+    },
+    {
+      "id": "dup01",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.7661,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Rust is great.",
+      "newer": "rust is great"
+    },
+    {
+      "id": "dup02",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9755,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts state the same port and are compatible.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 991.1808000000001
+        }
+      ],
+      "older": "Service auth runs on port 8080",
+      "newer": "Service auth runs on port 8080."
+    },
+    {
+      "id": "dup03",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9604,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "The two facts are identical in meaning.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1310.6904999999988
+        }
+      ],
+      "older": "To deploy, run npm run deploy",
+      "newer": "To deploy, run npm run deploy."
+    },
+    {
+      "id": "dup04",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9435,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts express the same preference; the newer wording does not invalidate the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1261.208200000001
+        }
+      ],
+      "older": "user prefers Rust",
+      "newer": "user prefers the Rust language"
+    },
+    {
+      "id": "dup05",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9828,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts state that the service runs on port 3001; they are compatible.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1008.4228999999996
+        }
+      ],
+      "older": "Service users runs on port 3001",
+      "newer": "Service users runs at port 3001"
+    },
+    {
+      "id": "dup06",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9417,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts state the same instruction and are compatible.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 916.5545000000002
+        }
+      ],
+      "older": "Run the unit tests with npm test",
+      "newer": "Run unit tests with npm test"
+    },
+    {
+      "id": "dup07",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9795,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts state the same dated event, so they are compatible.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1235.5328999999983
+        }
+      ],
+      "older": "On 2024-09-15, Maya joined the team.",
+      "newer": "On 2024-09-15, Maya joined the team"
+    },
+    {
+      "id": "dup08",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9842,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the same thing, so the newer fact does not invalidate the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1216.4555
+        }
+      ],
+      "older": "auth bug on login\n",
+      "newer": "auth bug on login"
+    },
+    {
+      "id": "dup09",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9715,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts report the same 401 on POST /login; the newer fact restates rather than invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1122.6201999999994
+        }
+      ],
+      "older": "User reported a 401 on POST /login",
+      "newer": "User reported a 401 on the POST /login endpoint"
+    },
+    {
+      "id": "dup10",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9494,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "The facts are identical in meaning.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 910.1663000000008
+        }
+      ],
+      "older": "Lint via npm run lint",
+      "newer": "lint via npm run lint"
+    },
+    {
+      "id": "dup11",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8809,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts state the same current preference for Rust.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1005.3186000000005
+        }
+      ],
+      "older": "I prefer the Rust programming language.",
+      "newer": "My preferred programming language is Rust."
+    },
+    {
+      "id": "dup12",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6927,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I drink my coffee black, no sugar.",
+      "newer": "Black coffee, no sugar — that's how I take it."
+    },
+    {
+      "id": "dup13",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8695,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts say Neovim is the user's preferred or primary editor; the newer fact is compatible with the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1262.863300000001
+        }
+      ],
+      "older": "My editor of choice is Neovim.",
+      "newer": "I use Neovim as my primary editor."
+    },
+    {
+      "id": "dup14",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8601,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts state the same auth service URL.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1070.5367999999999
+        }
+      ],
+      "older": "The auth service is reachable at http://auth.internal:8080",
+      "newer": "Auth service runs on http://auth.internal:8080."
+    },
+    {
+      "id": "dup15",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8772,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts assert that Postgres is the app’s primary database; they are compatible.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 941.1797999999999
+        }
+      ],
+      "older": "We use Postgres for the primary application database.",
+      "newer": "Postgres is the primary database for our app."
+    },
+    {
+      "id": "dup16",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6886,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The build is driven by Vite.",
+      "newer": "Vite handles our build pipeline."
+    },
+    {
+      "id": "dup17",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.9011,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts state that staging.example.com is the staging environment; they are consistent.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1094.1795999999995
+        }
+      ],
+      "older": "The staging environment lives at staging.example.com.",
+      "newer": "staging.example.com is our staging environment."
+    },
+    {
+      "id": "dup18",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8091,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Run the dev server with `npm start`.",
+      "newer": "`npm start` boots the dev server."
+    },
+    {
+      "id": "dup19",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7692,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Tests are executed via `npm test`.",
+      "newer": "Use `npm test` to run the test suite."
+    },
+    {
+      "id": "dup20",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7965,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Run database migrations with `npx knex migrate:latest`.",
+      "newer": "`npx knex migrate:latest` applies pending migrations."
+    },
+    {
+      "id": "dup21",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8213,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Linting is done by `npm run lint`.",
+      "newer": "Use `npm run lint` to lint the project."
+    },
+    {
+      "id": "dup22",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8429,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe compatible events in 2024: she moved to Berlin, which became her home.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1148.1377000000011
+        }
+      ],
+      "older": "She moved to Berlin in 2024.",
+      "newer": "Berlin became her home in 2024."
+    },
+    {
+      "id": "dup23",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8657,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the same change in the same time period: Maya became staff engineer last quarter.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1069.1926000000003
+        }
+      ],
+      "older": "Maya was promoted to staff engineer last quarter.",
+      "newer": "Last quarter, Maya's title changed to staff engineer."
+    },
+    {
+      "id": "dup24",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.9151,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe attending QCon SF in November; the newer wording does not invalidate the older fact.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1327.9633000000013
+        }
+      ],
+      "older": "I attended QCon SF in November.",
+      "newer": "Was at QCon SF this past November."
+    },
+    {
+      "id": "dup25",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8794,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.99,
+          "reasoning": "Both facts describe the same two-week trip to Japan in October and are compatible.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1105.9411999999993
+        }
+      ],
+      "older": "Took a two-week trip to Japan in October.",
+      "newer": "Spent two weeks in Japan during October."
+    },
+    {
+      "id": "dup26",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6966,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "User reported authentication failure on the /login endpoint, returning HTTP 401.",
+      "newer": "auth bug on login — getting 401"
+    },
+    {
+      "id": "dup27",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6573,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Reminder: deploy is scheduled for Friday at 4pm UTC.",
+      "newer": "deploy fri 4pm utc"
+    },
+    {
+      "id": "dup28",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7331,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Bug report: the search endpoint returns stale results after a write.",
+      "newer": "search returns stale data after writes"
+    },
+    {
+      "id": "dup29",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.5158,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Feature request: add Markdown export to the report page.",
+      "newer": "want md export on reports"
+    },
+    {
+      "id": "dup30",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.5947,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Status update: ingestion pipeline migration is in code review.",
+      "newer": "ingestion migration in review"
+    },
+    {
+      "id": "dup31",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7307,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "tool_result: ```\nERROR  Connection refused at db:5432\n```\nLooks like the DB is unreachable.",
+      "newer": "DB at db:5432 is unreachable — connection refused."
+    },
+    {
+      "id": "dup32",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7892,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "**TL;DR**: we're switching from `webpack` to `vite` next sprint.\n— posted in #frontend",
+      "newer": "switching webpack to vite next sprint"
+    },
+    {
+      "id": "dup33",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7092,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "```\n$ npm test\n[FAIL] auth.test.js\n```\nThe auth test is failing on main.",
+      "newer": "auth test failing on main"
+    },
+    {
+      "id": "dup34",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8542,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "Both facts say the changelog should be checked before bumping Qdrant to 1.13; the newer fact restates rather than invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-6-luna",
+            "reasoning_effort": "none"
+          },
+          "servedModel": "gpt-6-luna",
+          "systemFingerprint": null,
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1321.4894000000004
+        }
+      ],
+      "older": "We're going to bump qdrant to 1.13… actually wait, let me check the changelog first.",
+      "newer": "Need to check qdrant 1.13 changelog before we bump."
+    },
+    {
+      "id": "dup35",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7445,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "deploy on friday\n\n\n— sent from mobile",
+      "newer": "Deploy is scheduled for Friday."
+    }
+  ]
+}

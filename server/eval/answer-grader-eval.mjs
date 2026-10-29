@@ -19,6 +19,7 @@ import { dirname } from 'node:path';
 import { fHalfFrom, f1From } from './fbeta.mjs';
 import { pickThreshold } from './d3-eval.mjs';
 import { loadFixtureJsonl } from './memory-quality-eval.mjs';
+import { timed, callRecord, fileSha256 } from './lib/call-record.mjs';
 // TAU_ANSWER relocated to lib/answer-grader.mjs (read-path bouncer needs it without a prod→eval
 // import). Re-exported here so existing importers (memory-quality-eval.mjs) keep working.
 export { TAU_ANSWER } from '../lib/answer-grader.mjs';
@@ -67,46 +68,72 @@ export function buildResultJson({ judged, fixturePath, model }) {
   return { timestamp: null, fixture: fixturePath, model, precisionFloor: PRECISION_FLOOR, parseFails, graded: judged.length - parseFails, sweep, chosen };
 }
 
+/**
+ * `runs` serial runs of the grader over every triple, each swept and τ-picked. Each judged row
+ * keeps the verdict, its raw confidence and the call record (ok, failCause, the R1 fields,
+ * latency); a parse-fail or invoke-error (ok !== true) is excluded from the sweep (model
+ * migration Phase B, spec R2). The model is passed explicitly on every call.
+ */
+export async function runGrader({ rows, grade, model, runs = 1 }) {
+  const out = [];
+  for (let r = 0; r < runs; r++) {
+    const judged = [];
+    for (const row of rows) {
+      const v = await timed(() => grade(row.query, row.memory, { model }));
+      judged.push({ id: row.id, gold: row.gold === true, answers: v.answers, confidence: v.confidence, category: row.category, ...callRecord(v) });
+    }
+    const { sweep, chosen, parseFails, graded } = buildResultJson({ judged, fixturePath: null, model });
+    out.push({ run: r + 1, parseFails, graded, sweep, chosen, judged });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
-// CLI shim — one invocation = one run (mirror d3; run twice for stability). Live deps
-// are lazy-imported inside cliMain so importing this module from a test stays offline.
+// CLI shim. Live deps are lazy-imported inside cliMain so importing this module from a test
+// stays offline.
 // ---------------------------------------------------------------------------
 
-function parseArgs(argv) {
-  const args = {};
+export function parseArgs(argv) {
+  const args = { runs: 1 };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--fixture') args.fixture = argv[++i];
     else if (a === '--out') args.out = argv[++i];
+    else if (a === '--runs') args.runs = Math.max(1, Number.parseInt(argv[++i], 10) || 1);
   }
   return args;
 }
 
+/** Why the CLI cannot run, or null. A measurement names its grader: no silent default model. */
+export function cliError(args, env) {
+  if (!args.fixture) return 'Usage: answer-grader-eval.mjs --fixture <path> --out <path> [--runs N] (needs --fixture)';
+  if (!args.out) return '--out <path> is required';
+  if (!env.UM_ANSWER_GRADER_MODEL) return 'UM_ANSWER_GRADER_MODEL is required: the grader model is named, never defaulted';
+  return null;
+}
+
 async function cliMain() {
   const args = parseArgs(process.argv);
-  if (!args.fixture) { console.error('Usage: answer-grader-eval.mjs --fixture <path> [--out <path>]'); process.exit(2); }
+  const err = cliError(args, process.env);
+  if (err) { console.error(`[answer-grader-eval] ${err}`); process.exit(2); }
   if (!process.env.OPENAI_API_KEY) { try { process.loadEnvFile?.(); } catch { /* no ./.env */ } }
   if (!process.env.OPENAI_API_KEY) {
-    console.error('[answer-grader-eval] OPENAI_API_KEY not set — skipping (run: node --env-file=.env eval/answer-grader-eval.mjs --fixture eval/answer-grader-set.jsonl)');
+    console.error('[answer-grader-eval] OPENAI_API_KEY not set — skipping (run: node --env-file=.env eval/answer-grader-eval.mjs --fixture eval/answer-grader-set.jsonl --out <path>)');
     process.exit(2);
   }
 
   const { gradeAnswer } = await import('../lib/answer-grader.mjs');
-  const model = process.env.UM_ANSWER_GRADER_MODEL ?? 'gpt-4o-mini';
+  const model = process.env.UM_ANSWER_GRADER_MODEL;
   const rows = await loadFixtureJsonl(args.fixture);
-  const judged = [];
-  for (const row of rows) {
-    const v = await gradeAnswer(row.query, row.memory, { model });
-    judged.push({ id: row.id, gold: row.gold === true, answers: v.answers, confidence: v.confidence, ok: v.ok, category: row.category });
+  const runs = await runGrader({ rows, grade: gradeAnswer, model, runs: args.runs });
+  const result = { timestamp: new Date().toISOString(), fixture: args.fixture, fixtureSha256: await fileSha256(args.fixture), model, precisionFloor: PRECISION_FLOOR, runs };
+  await mkdir(dirname(args.out), { recursive: true });
+  await writeFile(args.out, JSON.stringify(result, null, 2) + '\n', 'utf8');
+  for (const r of runs) {
+    console.log(`[answer-grader-eval] run ${r.run} model=${model} graded=${r.graded} parseFails=${r.parseFails}`);
+    console.log('[answer-grader-eval] chosen:', JSON.stringify(r.chosen));
   }
-  const result = buildResultJson({ judged, fixturePath: args.fixture, model });
-  result.timestamp = new Date().toISOString();
-  const out = args.out ?? `eval/results/${result.timestamp.slice(0, 10)}-answer-grader-run1.json`;
-  await mkdir(dirname(out), { recursive: true });
-  await writeFile(out, JSON.stringify(result, null, 2) + '\n', 'utf8');
-  console.log(`[answer-grader-eval] model=${model} graded=${result.graded} parseFails=${result.parseFails}`);
-  console.log('[answer-grader-eval] chosen:', JSON.stringify(result.chosen));
-  console.log(`[answer-grader-eval] written to ${out}`);
+  console.log(`[answer-grader-eval] written to ${args.out}`);
 }
 
 const IS_MAIN = process.argv[1] === fileURLToPath(import.meta.url);

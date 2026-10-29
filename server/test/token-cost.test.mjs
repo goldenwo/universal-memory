@@ -263,7 +263,7 @@ test('token-cost: measurement sweep — 4 additional locations', () => {
 		emit('');
 		emit('=== LOCATION 4: Summarizer prompt ===');
 		emit('  Source: plugins/claude-code/universal-memory/hooks/lib/summarize.sh');
-		emit('  Surface consumed by: OpenAI gpt-4o-mini (default) or Claude (UM_SUMMARIZER=claude-agent-sdk)');
+		emit('  Surface consumed by: OpenAI gpt-6-luna (default) or Claude (UM_SUMMARIZER=claude-agent-sdk)');
 		emit('  Note: system prompt has NO runtime placeholders (measured as-is);');
 		emit('        user message includes the transcript (variable; see per-char estimate below).');
 		emit('');

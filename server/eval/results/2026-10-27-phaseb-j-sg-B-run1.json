@@ -1,0 +1,2276 @@
+{
+  "timestamp": "2026-10-27T02:23:00.688Z",
+  "suite": "J-sg",
+  "judgeProvider": "openai",
+  "judgeModel": "gpt-4o-mini",
+  "embeddingModel": "text-embedding-3-small",
+  "floor": 0.84,
+  "ceiling": 1,
+  "runs": 1,
+  "judgeThreshold": 0,
+  "fixtureSha256": {
+    "eval/held-out-contradiction-set.jsonl": "b25487f00fbe07701b9093d9db26450ca48deb66bec749a915ec27b600bbeac4",
+    "eval/over-supersession-set.jsonl": "61ffda4ce2cf0c428af9e3f20065b8e656a4880167d8316a6c23a8d872b7c2d9",
+    "test/fixtures/dedup-labels.json": "84fb27c0066b5e293b25887f5a65712849f250af77a9391d9f6da49542033132"
+  },
+  "inBandRef": "eval/results/2026-06-19-supersession-gate-eval-ceil1.json",
+  "integrity": {
+    "ok": true,
+    "missing": [],
+    "extra": []
+  },
+  "perRow": [
+    {
+      "id": "ho01",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8513,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the current message queue, and they cannot both be true as they refer to different technologies.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1007.4865
+        }
+      ],
+      "older": "Our message queue is Kafka",
+      "newer": "Our message queue is RabbitMQ"
+    },
+    {
+      "id": "ho02",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8572,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the cache layer technology being used, and they present mutually exclusive technologies (Redis vs. Memcached), indicating a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1237.1704
+        }
+      ],
+      "older": "The cache layer uses Redis",
+      "newer": "The cache layer uses Memcached"
+    },
+    {
+      "id": "ho03",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8014,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our CI runs on Jenkins",
+      "newer": "Our CI runs on CircleCI"
+    },
+    {
+      "id": "ho04",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7676,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The frontend bundler is Webpack",
+      "newer": "The frontend bundler is Vite"
+    },
+    {
+      "id": "ho05",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7013,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our ORM is Prisma",
+      "newer": "Our ORM is TypeORM"
+    },
+    {
+      "id": "ho06",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7038,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The app is hosted on Vercel",
+      "newer": "The app is hosted on Netlify"
+    },
+    {
+      "id": "ho07",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8172,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our primary backend language is Java",
+      "newer": "Our primary backend language is Kotlin"
+    },
+    {
+      "id": "ho08",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.9209,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the daily standup time, and they provide conflicting times.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 979.8422
+        }
+      ],
+      "older": "Our daily standup is at 9am",
+      "newer": "Our daily standup is at 11am"
+    },
+    {
+      "id": "ho09",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.8836,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same temporal frame regarding the location of the desk, and they provide conflicting information about its floor.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1069.9243999999999
+        }
+      ],
+      "older": "My desk is on the third floor",
+      "newer": "My desk is on the eighth floor"
+    },
+    {
+      "id": "ho10",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "finance",
+      "cosine": 0.8488,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same temporal frame regarding the person's main credit card, and they state different brands, which directly contradicts each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1192.3673000000008
+        }
+      ],
+      "older": "My main credit card is a Visa",
+      "newer": "My main credit card is a Mastercard"
+    },
+    {
+      "id": "ho11",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "health",
+      "cosine": 0.7225,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My physician is Dr. Patel",
+      "newer": "My physician is Dr. Nguyen"
+    },
+    {
+      "id": "ho12",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "travel",
+      "cosine": 0.812,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My layover is in Dubai",
+      "newer": "My layover is in Doha"
+    },
+    {
+      "id": "ho13",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "food",
+      "cosine": 0.8279,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My go-to cuisine is Thai",
+      "newer": "My go-to cuisine is Mexican"
+    },
+    {
+      "id": "ho14",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "pets",
+      "cosine": 0.606,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My cat is named Max",
+      "newer": "My cat is named Cooper"
+    },
+    {
+      "id": "ho15",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "contact",
+      "cosine": 0.65,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My area code is 415",
+      "newer": "My area code is 312"
+    },
+    {
+      "id": "ho16",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.767,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The public API uses GraphQL",
+      "newer": "The public API uses REST"
+    },
+    {
+      "id": "ho17",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8219,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The service listens on port 8080",
+      "newer": "The service listens on port 9090"
+    },
+    {
+      "id": "ho18",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.9372,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the length of the sprint, and they provide conflicting durations.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1207.9711000000007
+        }
+      ],
+      "older": "Our sprint is two weeks long",
+      "newer": "Our sprint is three weeks long"
+    },
+    {
+      "id": "ho19",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "finance",
+      "cosine": 0.9029,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the person's current monthly rent, and the newer fact directly contradicts the older fact by stating a different amount.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1104.8895000000002
+        }
+      ],
+      "older": "My monthly rent is 1800 dollars",
+      "newer": "My monthly rent is 2400 dollars"
+    },
+    {
+      "id": "ho20",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.89,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the server's RAM capacity, and the newer fact directly contradicts the older fact by stating a different amount of RAM.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1026.2577999999994
+        }
+      ],
+      "older": "The server has 16 gigabytes of RAM",
+      "newer": "The server has 64 gigabytes of RAM"
+    },
+    {
+      "id": "ho21",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.8608,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the project deadline, and they provide conflicting dates.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 823.2995999999994
+        }
+      ],
+      "older": "The project deadline is March 15th",
+      "newer": "The project deadline is April 20th"
+    },
+    {
+      "id": "ho22",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "travel",
+      "cosine": 0.7797,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My seat number is 14A",
+      "newer": "My seat number is 22F"
+    },
+    {
+      "id": "ho23",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "health",
+      "cosine": 0.8184,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My appointment is at 2pm",
+      "newer": "My appointment is at 4pm"
+    },
+    {
+      "id": "ho24",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "contact",
+      "cosine": 0.824,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My phone extension is 4421",
+      "newer": "My phone extension is 7789"
+    },
+    {
+      "id": "ho25",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "home",
+      "cosine": 0.8856,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both statements assert the same temporal frame regarding the number of bedrooms, and the newer fact directly contradicts the older fact by stating a different quantity.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 951.0821999999989
+        }
+      ],
+      "older": "I have two bedrooms",
+      "newer": "I have three bedrooms"
+    },
+    {
+      "id": "ho26",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.9139,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the request timeout, and they provide conflicting values.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 860.3802999999998
+        }
+      ],
+      "older": "The request timeout is 30 seconds",
+      "newer": "The request timeout is 60 seconds"
+    },
+    {
+      "id": "ho27",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.896,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same temporal frame regarding the connection pool size, and the newer fact directly contradicts the older fact by stating a different size.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9517d8abbc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1171.9340000000002
+        }
+      ],
+      "older": "The connection pool size is 10",
+      "newer": "The connection pool size is 50"
+    },
+    {
+      "id": "ho28",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.8958,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the version of Node.js currently in production, and the newer fact directly states a different version.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 882.6910999999991
+        }
+      ],
+      "older": "We run Node.js 18 in production",
+      "newer": "We run Node.js 22 in production"
+    },
+    {
+      "id": "ho29",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "finance",
+      "cosine": 0.8996,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the person's current 401k contribution, and the newer fact directly contradicts the older fact by stating a different contribution percentage.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1163.9048000000003
+        }
+      ],
+      "older": "My 401k contribution is 6 percent",
+      "newer": "My 401k contribution is 10 percent"
+    },
+    {
+      "id": "ho30",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "work",
+      "cosine": 0.8709,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the current size of the engineering team without any time-scoping, making the newer fact directly contradict the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9517d8abbc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1029.763500000001
+        }
+      ],
+      "older": "Our engineering team has 8 full-time members",
+      "newer": "Our engineering team has 20 full-time members"
+    },
+    {
+      "id": "ho31",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "home",
+      "cosine": 0.903,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the current setting of the thermostat without any time-scoping, making them directly contradictory.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 786.0312000000013
+        }
+      ],
+      "older": "My thermostat is set to 68 degrees",
+      "newer": "My thermostat is set to 72 degrees"
+    },
+    {
+      "id": "ho32",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.8968,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the current API version without any time-scoping, making them directly contradictory.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 836.9010999999991
+        }
+      ],
+      "older": "The API version is v2",
+      "newer": "The API version is v3"
+    },
+    {
+      "id": "ho33",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8882,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the primary datastore, and they directly contradict each other by stating different databases as the primary datastore.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1025.6654999999992
+        }
+      ],
+      "older": "Our primary datastore is DynamoDB for all services",
+      "newer": "Our primary datastore is Postgres for all services, not DynamoDB"
+    },
+    {
+      "id": "ho34",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8487,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same temporal frame regarding the programming language of the checkout service, and the newer fact directly states that it is written in Go, which contradicts the older fact that states it is written in Ruby.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1070.4789999999994
+        }
+      ],
+      "older": "The checkout service is written in Ruby",
+      "newer": "The checkout service is written in Go, not Ruby"
+    },
+    {
+      "id": "ho35",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8889,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the name of the default branch, and the newer fact directly contradicts the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1092.9980000000014
+        }
+      ],
+      "older": "The default branch is called master",
+      "newer": "The default branch is called main, not master"
+    },
+    {
+      "id": "ho36",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "work",
+      "cosine": 0.8554,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 1,
+          "reasoning": "Both facts assert the current location of the main office in the same temporal frame, and they provide conflicting information about its location.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 968.3053
+        }
+      ],
+      "older": "Our main office is located in the downtown tower",
+      "newer": "Our main office is located in the riverside tower, not the downtown tower"
+    },
+    {
+      "id": "ho37",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8523,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "The newer fact states that users sign in with passkeys instead of passwords, which directly contradicts the older fact that users sign in with passwords.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9517d8abbc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 993.1681000000008
+        }
+      ],
+      "older": "Users sign in to the platform with passwords",
+      "newer": "Users sign in to the platform with passkeys, not passwords"
+    },
+    {
+      "id": "ho38",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "finance",
+      "cosine": 0.905,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the payment schedule of the base salary, and they directly contradict each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1214.219799999999
+        }
+      ],
+      "older": "My base salary is paid on a monthly schedule",
+      "newer": "My base salary is paid on a biweekly schedule, not monthly"
+    },
+    {
+      "id": "ho39",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8406,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the communication method between the frontend and backend, and the newer fact directly states a different method (gRPC) that invalidates the older fact (REST).",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1150.696
+        }
+      ],
+      "older": "The frontend talks to the backend over REST",
+      "newer": "The frontend talks to the backend over gRPC, not REST"
+    },
+    {
+      "id": "ho40",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "health",
+      "cosine": 0.8556,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both statements assert the same temporal frame regarding when the medication is taken, and they directly contradict each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 932.0311000000002
+        }
+      ],
+      "older": "I take my medication in the morning",
+      "newer": "I take my medication at night, not in the morning"
+    },
+    {
+      "id": "ho41",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.9395,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the API rate limit, and the newer fact directly contradicts the older fact by stating a different rate limit.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1073.981099999999
+        }
+      ],
+      "older": "The API rate limit is 100 requests per minute",
+      "newer": "The API rate limit is 500 requests per minute"
+    },
+    {
+      "id": "ho42",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.9096,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the primary cloud region, and they state different regions, which logically contradicts each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 884.2813999999998
+        }
+      ],
+      "older": "Our primary cloud region is us-east-1",
+      "newer": "Our primary cloud region is eu-west-1"
+    },
+    {
+      "id": "os001",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.9087,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact states that the person holds a different certification, which does not invalidate the older fact about holding the AWS Solutions Architect certification. Both certifications can coexist.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1016.7667999999994
+        }
+      ],
+      "older": "I hold the AWS Solutions Architect certification",
+      "newer": "I hold the AWS Developer certification"
+    },
+    {
+      "id": "os002",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8604,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The two facts can coexist as the app can support both light mode and dark mode simultaneously.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 817.893
+        }
+      ],
+      "older": "Our app supports light mode",
+      "newer": "Our app supports dark mode"
+    },
+    {
+      "id": "os003",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8484,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the platforms the app runs on, and they cannot both be true simultaneously.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 916.5594999999994
+        }
+      ],
+      "older": "The app runs on iOS",
+      "newer": "The app runs on Android"
+    },
+    {
+      "id": "os004",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8351,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "We operate in the us-east-1 region",
+      "newer": "We operate in the eu-west-1 region"
+    },
+    {
+      "id": "os005",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.8873,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Holding one certification does not invalidate holding another; both can coexist.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 735.7990000000009
+        }
+      ],
+      "older": "I hold the AWS Solutions Architect certification",
+      "newer": "I hold the AWS SysOps Administrator certification"
+    },
+    {
+      "id": "os006",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.8795,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.8,
+          "reasoning": "The newer fact states that the store is open on weekends, which does not logically invalidate the older fact that it is open on weekdays. Both can be true simultaneously.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9517d8abbc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 946.6317999999992
+        }
+      ],
+      "older": "The store is open on weekdays",
+      "newer": "The store is open on weekends"
+    },
+    {
+      "id": "os007",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8301,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Reports can be exported as PDF",
+      "newer": "Reports can be exported as CSV"
+    },
+    {
+      "id": "os008",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "dev",
+      "cosine": 0.9456,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact expands on the older fact by adding integration tests to the existing unit tests, which does not invalidate the older statement.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 875.7315999999992
+        }
+      ],
+      "older": "Our CI pipeline runs unit tests",
+      "newer": "Our CI pipeline runs unit tests and integration tests"
+    },
+    {
+      "id": "os009",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "dev",
+      "cosine": 0.9039,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact expands on the older fact by adding Kubernetes to the deployment method, which does not contradict the original statement about using Docker.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1096.4044000000013
+        }
+      ],
+      "older": "We deploy the service with Docker",
+      "newer": "We deploy the service with Docker and Kubernetes"
+    },
+    {
+      "id": "os010",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "personal",
+      "cosine": 0.8609,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact expands on the older fact by adding the violin to the list of instruments being learned, which does not contradict the original statement about learning the piano.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 972.6774999999998
+        }
+      ],
+      "older": "I'm learning to play the piano",
+      "newer": "I'm learning to play the piano and the violin"
+    },
+    {
+      "id": "os011",
+      "kind": "decline",
+      "group": "restatement-duplicate",
+      "lane": "dev",
+      "cosine": 0.8621,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both statements assert the same fact about the production database being PostgreSQL, and they are compatible.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 812.4697999999989
+        }
+      ],
+      "older": "Our production database is PostgreSQL",
+      "newer": "PostgreSQL is our production database"
+    },
+    {
+      "id": "os012",
+      "kind": "decline",
+      "group": "restatement-duplicate",
+      "lane": "dev",
+      "cosine": 0.9084,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements assert the same fact about using Redis for the cache layer, just phrased differently. There is no contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1112.9045999999998
+        }
+      ],
+      "older": "The cache layer uses Redis",
+      "newer": "We use Redis for the cache layer"
+    },
+    {
+      "id": "os013",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "finance",
+      "cosine": 0.8061,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I have a Visa card on file",
+      "newer": "I have a Mastercard card on file"
+    },
+    {
+      "id": "os014",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "personal",
+      "cosine": 0.7907,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I am fluent in Spanish",
+      "newer": "I am fluent in Portuguese"
+    },
+    {
+      "id": "os015",
+      "kind": "decline",
+      "group": "different-attribute-same-subject",
+      "lane": "dev",
+      "cosine": 0.7164,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our production database is PostgreSQL",
+      "newer": "Our production database stores about 2 terabytes of data"
+    },
+    {
+      "id": "os016",
+      "kind": "decline",
+      "group": "different-subject-same-structure",
+      "lane": "dev",
+      "cosine": 0.6331,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The frontend is built with React",
+      "newer": "The backend is built with Go"
+    },
+    {
+      "id": "os017",
+      "kind": "boundary",
+      "group": "version-upgrade",
+      "lane": "dev",
+      "cosine": 0.8423,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the version of PostgreSQL currently in production, and the newer fact directly states a different version.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 982.431700000001
+        }
+      ],
+      "older": "We run PostgreSQL 14 in production",
+      "newer": "We run PostgreSQL 16 in production"
+    },
+    {
+      "id": "os018",
+      "kind": "boundary",
+      "group": "version-upgrade",
+      "lane": "dev",
+      "cosine": 0.9111,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert the same temporal frame regarding the target iOS version of the mobile app, and targeting iOS 17 logically invalidates targeting iOS 16.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1183.2417999999998
+        }
+      ],
+      "older": "The mobile app targets iOS 16",
+      "newer": "The mobile app targets iOS 17"
+    },
+    {
+      "id": "os019",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8059,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "We support payments in USD",
+      "newer": "We support payments in EUR"
+    },
+    {
+      "id": "os020",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.7324,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our SDK is available for Python",
+      "newer": "Our SDK is available for Ruby"
+    },
+    {
+      "id": "os021",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "contact",
+      "cosine": 0.7176,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I'm reachable on Signal",
+      "newer": "I'm reachable on WhatsApp"
+    },
+    {
+      "id": "os022",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.9632,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "The newer fact states that parking is on the south side, which directly contradicts the older fact that states parking is on the north side, assuming both statements refer to the same temporal frame.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1065.9400999999998
+        }
+      ],
+      "older": "The venue has parking on the north side",
+      "newer": "The venue has parking on the south side"
+    },
+    {
+      "id": "dup01",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.766,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Rust is great.",
+      "newer": "rust is great"
+    },
+    {
+      "id": "dup02",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9755,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same information about the service running on port 8080, so there is no contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 925.9141
+        }
+      ],
+      "older": "Service auth runs on port 8080",
+      "newer": "Service auth runs on port 8080."
+    },
+    {
+      "id": "dup03",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9604,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same statement about the deployment process without any conflicting information.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 937.8981999999996
+        }
+      ],
+      "older": "To deploy, run npm run deploy",
+      "newer": "To deploy, run npm run deploy."
+    },
+    {
+      "id": "dup04",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9435,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both statements express the same preference for Rust, with the newer fact providing clarification that it refers to the Rust programming language.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 922.2769000000008
+        }
+      ],
+      "older": "user prefers Rust",
+      "newer": "user prefers the Rust language"
+    },
+    {
+      "id": "dup05",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9829,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The two statements use different prepositions ('on' vs 'at') but convey the same information about the port number. This does not constitute a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1050.1340999999993
+        }
+      ],
+      "older": "Service users runs on port 3001",
+      "newer": "Service users runs at port 3001"
+    },
+    {
+      "id": "dup06",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9416,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements convey the same action of running unit tests with npm test, and there is no contradiction in their content.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1211.0895999999993
+        }
+      ],
+      "older": "Run the unit tests with npm test",
+      "newer": "Run unit tests with npm test"
+    },
+    {
+      "id": "dup07",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9795,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same event occurring on the same date, so they are compatible and do not contradict each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 896.7932000000001
+        }
+      ],
+      "older": "On 2024-09-15, Maya joined the team.",
+      "newer": "On 2024-09-15, Maya joined the team"
+    },
+    {
+      "id": "dup08",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9842,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts assert the same temporal frame regarding the auth bug on login, and therefore do not contradict each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_6548d98151",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 902.9678999999996
+        }
+      ],
+      "older": "auth bug on login\n",
+      "newer": "auth bug on login"
+    },
+    {
+      "id": "dup09",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9715,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both facts report the same event (a 401 error on POST /login) but use slightly different wording. They do not contradict each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9517d8abbc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1067.6491000000005
+        }
+      ],
+      "older": "User reported a 401 on POST /login",
+      "newer": "User reported a 401 on the POST /login endpoint"
+    },
+    {
+      "id": "dup10",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9494,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact is a minor typographical change ('Lint' to 'lint') and does not contradict the older fact as both refer to the same action.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1011.3408
+        }
+      ],
+      "older": "Lint via npm run lint",
+      "newer": "lint via npm run lint"
+    },
+    {
+      "id": "dup11",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8809,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both statements assert the same preference for the Rust programming language without any temporal conflict.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 987.8575000000001
+        }
+      ],
+      "older": "I prefer the Rust programming language.",
+      "newer": "My preferred programming language is Rust."
+    },
+    {
+      "id": "dup12",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6926,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I drink my coffee black, no sugar.",
+      "newer": "Black coffee, no sugar — that's how I take it."
+    },
+    {
+      "id": "dup13",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8695,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact specifies that Neovim is the primary editor, which is compatible with the older fact stating it is the editor of choice. Both can coexist without contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 943.4992000000002
+        }
+      ],
+      "older": "My editor of choice is Neovim.",
+      "newer": "I use Neovim as my primary editor."
+    },
+    {
+      "id": "dup14",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8601,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements assert the same information about the auth service's address without conflicting details.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 751.8811999999998
+        }
+      ],
+      "older": "The auth service is reachable at http://auth.internal:8080",
+      "newer": "Auth service runs on http://auth.internal:8080."
+    },
+    {
+      "id": "dup15",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8772,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements assert the same fact about the database being used for the application, just phrased differently. There is no contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 900.7754000000004
+        }
+      ],
+      "older": "We use Postgres for the primary application database.",
+      "newer": "Postgres is the primary database for our app."
+    },
+    {
+      "id": "dup16",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6886,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The build is driven by Vite.",
+      "newer": "Vite handles our build pipeline."
+    },
+    {
+      "id": "dup17",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.9012,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both statements assert the same fact about the staging environment without any temporal conflict.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 760.7273999999998
+        }
+      ],
+      "older": "The staging environment lives at staging.example.com.",
+      "newer": "staging.example.com is our staging environment."
+    },
+    {
+      "id": "dup18",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8091,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Run the dev server with `npm start`.",
+      "newer": "`npm start` boots the dev server."
+    },
+    {
+      "id": "dup19",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7692,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Tests are executed via `npm test`.",
+      "newer": "Use `npm test` to run the test suite."
+    },
+    {
+      "id": "dup20",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7964,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Run database migrations with `npx knex migrate:latest`.",
+      "newer": "`npx knex migrate:latest` applies pending migrations."
+    },
+    {
+      "id": "dup21",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8212,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Linting is done by `npm run lint`.",
+      "newer": "Use `npm run lint` to lint the project."
+    },
+    {
+      "id": "dup22",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8429,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements refer to the same time frame (2024) but do not contradict each other; moving to Berlin and it becoming her home can coexist.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9517d8abbc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 832.6016
+        }
+      ],
+      "older": "She moved to Berlin in 2024.",
+      "newer": "Berlin became her home in 2024."
+    },
+    {
+      "id": "dup23",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8657,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements refer to the same event of Maya's title change to staff engineer last quarter, and do not contradict each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1008.3293999999987
+        }
+      ],
+      "older": "Maya was promoted to staff engineer last quarter.",
+      "newer": "Last quarter, Maya's title changed to staff engineer."
+    },
+    {
+      "id": "dup24",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.9151,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements refer to the same event in the past (QCon SF in November), and the newer fact does not contradict the older fact but rather reaffirms it.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1033.7880000000005
+        }
+      ],
+      "older": "I attended QCon SF in November.",
+      "newer": "Was at QCon SF this past November."
+    },
+    {
+      "id": "dup25",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8794,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 1,
+          "reasoning": "Both statements refer to the same trip to Japan in October, and thus do not contradict each other.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9517d8abbc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 818.9576000000015
+        }
+      ],
+      "older": "Took a two-week trip to Japan in October.",
+      "newer": "Spent two weeks in Japan during October."
+    },
+    {
+      "id": "dup26",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6967,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "User reported authentication failure on the /login endpoint, returning HTTP 401.",
+      "newer": "auth bug on login — getting 401"
+    },
+    {
+      "id": "dup27",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6572,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Reminder: deploy is scheduled for Friday at 4pm UTC.",
+      "newer": "deploy fri 4pm utc"
+    },
+    {
+      "id": "dup28",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7331,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Bug report: the search endpoint returns stale results after a write.",
+      "newer": "search returns stale data after writes"
+    },
+    {
+      "id": "dup29",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.5157,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Feature request: add Markdown export to the report page.",
+      "newer": "want md export on reports"
+    },
+    {
+      "id": "dup30",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.5947,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Status update: ingestion pipeline migration is in code review.",
+      "newer": "ingestion migration in review"
+    },
+    {
+      "id": "dup31",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7307,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "tool_result: ```\nERROR  Connection refused at db:5432\n```\nLooks like the DB is unreachable.",
+      "newer": "DB at db:5432 is unreachable — connection refused."
+    },
+    {
+      "id": "dup32",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7892,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "**TL;DR**: we're switching from `webpack` to `vite` next sprint.\n— posted in #frontend",
+      "newer": "switching webpack to vite next sprint"
+    },
+    {
+      "id": "dup33",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7092,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "```\n$ npm test\n[FAIL] auth.test.js\n```\nThe auth test is failing on main.",
+      "newer": "auth test failing on main"
+    },
+    {
+      "id": "dup34",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8542,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both statements express the intention to check the changelog for qdrant 1.13 before proceeding with the bump. They do not contradict each other as they can coexist in the same temporal frame.",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1329.6908000000003
+        }
+      ],
+      "older": "We're going to bump qdrant to 1.13… actually wait, let me check the changelog first.",
+      "newer": "Need to check qdrant 1.13 changelog before we bump."
+    },
+    {
+      "id": "dup35",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7445,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "deploy on friday\n\n\n— sent from mobile",
+      "newer": "Deploy is scheduled for Friday."
+    }
+  ]
+}

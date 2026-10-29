@@ -134,16 +134,16 @@ test('summarize: unknown backend falls back to UM_SUMMARIZER_FALLBACK', async ()
 
 test('#314 summarizerTarget: the same provider and model summarize() resolves and bills, case by case', async () => {
   const cases = [
-    { env: {}, ctx: {}, want: { provider: 'openai', model: 'gpt-4o-mini' } },
+    { env: {}, ctx: {}, want: { provider: 'openai', model: 'gpt-6-luna' } },
     { env: {}, ctx: { model: 'gpt-4.1-nano-2025-04-14' }, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
     { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: {}, want: { provider: 'openai', model: 'gpt-4.1-nano-2025-04-14' } },
     { env: { UM_SUMMARIZER_MODEL: 'gpt-4.1-nano-2025-04-14' }, ctx: { model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
-    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
     { env: { UM_SUMMARIZER_PROVIDER: 'anthropic' }, ctx: { backend: 'openai', model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
     { env: { UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'ollama', model: 'llama3' } },
-    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic', UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: { UM_SUMMARIZER_PROVIDER: 'anthropic', UM_SUMMARIZER: 'ollama' }, ctx: {}, want: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
     { env: {}, ctx: { backend: 'claude-agent-sdk', model: 'gpt-4o-mini' }, want: { provider: 'openai', model: 'gpt-4o-mini' } },
-    { env: { UM_SUMMARIZER_FALLBACK: 'anthropic' }, ctx: { backend: 'nonexistent-backend' }, want: { provider: 'anthropic', model: 'claude-haiku-4-5-20251001' } },
+    { env: { UM_SUMMARIZER_FALLBACK: 'anthropic' }, ctx: { backend: 'nonexistent-backend' }, want: { provider: 'anthropic', model: 'claude-haiku-5-5' } },
   ];
   const VARS = ['UM_SUMMARIZER', 'UM_SUMMARIZER_PROVIDER', 'UM_SUMMARIZER_MODEL', 'UM_SUMMARIZER_FALLBACK'];
   const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
@@ -186,8 +186,8 @@ test('summarize: openai cost formula is correct', async () => {
     },
   };
   const result = await summarize('t', { backend: 'openai', openaiClient });
-  // 1M input @ $0.15/1M + 1M output @ $0.60/1M = $0.75
-  assert.ok(Math.abs(result.costUsd - 0.75) < 0.001, `expected ~0.75 got ${result.costUsd}`);
+  // The default model, gpt-6-luna (model migration Phase B): 1M input @ $0.10/1M + 1M output @ $0.50/1M = $0.60
+  assert.ok(Math.abs(result.costUsd - 0.60) < 0.001, `expected ~0.60 got ${result.costUsd}`);
 });
 
 // ---------- C1: orchestrator contract + anthropic/google registration ----------
@@ -240,4 +240,15 @@ test('model migration review: a blank UM_SUMMARIZER_MODEL is treated as unset, n
     if (prev === undefined) delete process.env.UM_SUMMARIZER_MODEL; else process.env.UM_SUMMARIZER_MODEL = prev;
   }
   assert.equal(seenModel, openaiMod.defaults.summarizerModel, `summarize sent model ${JSON.stringify(seenModel)}`);
+});
+
+test('model migration Phase B (spec R1): summarize() passes the provider\'s R1 call record through on its return', async () => {
+  const R1 = { requestParams: { model: 'gpt-6-luna', reasoning_effort: 'none' }, servedModel: 'gpt-6-luna', systemFingerprint: 'fp_1', reasoningTokens: 0, stopReason: 'stop' };
+  const result = await summarize('t', {
+    provider: 'openai', model: 'gpt-6-luna',
+    _providerOverride: { summarizerInvoke: async () => ({ content: 's', usage: { tokensIn: 1, tokensOut: 1 }, ...R1 }) },
+    metrics: { counter: () => {}, histogram: () => {} },
+  });
+  assert.equal(result.summary, 's');
+  for (const [k, val] of Object.entries(R1)) assert.deepEqual(result[k], val, k);
 });

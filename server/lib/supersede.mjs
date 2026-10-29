@@ -28,7 +28,7 @@
  * + ADR-0007 Option C (the in-band decision). Plan refs: D3.1 Task 1.3; Gap-5 P3.
  */
 
-import { judgeContradiction } from './contradiction-judge.mjs';
+import { judgeContradiction, judgeProviderName, JUDGE_BACKENDS } from './contradiction-judge.mjs';
 import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
 
 /**
@@ -203,21 +203,62 @@ export function isAutoSupersedeEnabled(env = process.env) {
  * server/test/supersede.test.mjs.
  */
 export function contradictionBandCeiling(env = process.env) {
-  const n = Number.parseFloat(env.UM_CONTRADICTION_BAND_CEILING);
-  return Number.isFinite(n) ? n : 0.95;
+  return parseNumberEnv(env.UM_CONTRADICTION_BAND_CEILING) ?? 0.95;
 }
 
 /**
- * Judge-confidence threshold for an inline in-band supersession (default 0.80).
+ * A numeric override from the environment, as every supersession knob reads it: the whole
+ * trimmed value must be a finite number, else undefined (no override, so the caller's default
+ * applies). A malformed value never becomes a partial number ('0.1garbage' read as 0.1 by
+ * parseFloat), 0 (' ' read by Number) or NaN ('abc').
+ */
+export function parseNumberEnv(raw) {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  const n = s === '' ? Number.NaN : Number(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+// The judge threshold of a provider with no τ* of its own: the value pinned 2026-06-02 on
+// gpt-4o-mini (server/eval/results/d3-latest.json), re-validated at temperature 0 on 06-03.
+const UNMEASURED_JUDGE_THRESHOLD = 0.80;
+
+/**
+ * The judge provider's own judge-confidence threshold (model migration Phase B, spec R4 and
+ * R6(a)): `defaults.judgeThreshold` of the provider judgeContradiction resolves, else 0.80.
+ * OpenAI's is τ* 0.85, measured on its default judge model, gpt-6-luna, at effort none
+ * (window 2, committed 0c4ca22); Anthropic keeps 0.80 explicitly (no τ* held on
+ * claude-haiku-5-5). It keys on the provider, so it fits that provider's default judge model:
+ * an install that pins UM_CONTRADICTION_MODEL to another model must pin
+ * UM_AUTOSUPERSEDE_THRESHOLD as well (server/.env.example). A caller's opts.provider is not
+ * seen here; no production caller passes one. This is the session-end detector's default
+ * (contradiction-batch.mjs `judgeThreshold`); it does not read UM_AUTOSUPERSEDE_THRESHOLD.
+ */
+export function defaultJudgeThreshold(env = process.env) {
+  return JUDGE_BACKENDS[judgeProviderName(env)]?.defaults?.judgeThreshold ?? UNMEASURED_JUDGE_THRESHOLD;
+}
+
+/**
+ * The operator's UM_AUTOSUPERSEDE_THRESHOLD as a number, or undefined when it is unset, blank
+ * or not wholly numeric (parseNumberEnv). The one reader of the variable: the in-band path
+ * (below) and the checkpoint's detector call (checkpoint-chunk-txn.mjs) both use it, so a
+ * malformed value falls back to the default on both, never to NaN (never supersede), 0
+ * (always supersede) or a numeric prefix.
+ */
+export function judgeThresholdOverride(env = process.env) {
+  return parseNumberEnv(env.UM_AUTOSUPERSEDE_THRESHOLD);
+}
+
+/**
+ * Judge-confidence threshold for an inline in-band supersession:
+ * UM_AUTOSUPERSEDE_THRESHOLD, else defaultJudgeThreshold().
  *
- * Reuses UM_AUTOSUPERSEDE_THRESHOLD — the same env var and default the
- * session-end detector uses (contradiction-batch.mjs `judgeThreshold`), so the
- * write-time and session-end paths agree on what counts as a confident
- * contradiction. Keep the 0.80 default in lockstep with that detector default.
+ * Reuses UM_AUTOSUPERSEDE_THRESHOLD — the same env var the session-end detector is handed
+ * (checkpoint-chunk-txn.mjs passes judgeThresholdOverride(), undefined when unset, so the
+ * detector applies the same defaultJudgeThreshold), so the write-time and session-end paths
+ * agree on what counts as a confident contradiction.
  */
 export function autoSupersedeJudgeThreshold(env = process.env) {
-  const n = Number.parseFloat(env.UM_AUTOSUPERSEDE_THRESHOLD);
-  return Number.isFinite(n) ? n : 0.80;
+  return judgeThresholdOverride(env) ?? defaultJudgeThreshold(env);
 }
 
 /**
@@ -237,9 +278,9 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * demotion in a crash-safe order (upsert-newer-first, then demote-older).
  *
  * PURE w.r.t. metrics — emits none. Callers own the
- * `um_inband_supersede_total{superseded|declined|demote_error}` emission, keyed
- * off the returned `{supersede, judged}` plus their own demotion result (the
- * canonical 3-outcome mapping lives in add.mjs's umAdd).
+ * `um_inband_supersede_total{superseded|declined|demote_error|judge_error}` emission,
+ * keyed off the returned `{supersede, judged, verdict}` plus their own demotion result
+ * (the canonical 4-outcome mapping lives in add.mjs's umAdd).
  *
  * The judge fires ONLY for the eligible-in-band slice (returns `judged:true`):
  * flag-off, unpartitioned, and out-of-band hits short-circuit before any judge
@@ -265,8 +306,9 @@ export function autoSupersedeJudgeThreshold(env = process.env) {
  * @param {boolean}  [p.enabled]        - Auto-supersession flag (default: isAutoSupersedeEnabled()).
  * @param {{valid_from?: string}} [p.olderTruth]  - Recorded truth time of the stored candidate (its payload `valid_from`).
  * @param {{valid_from?: string, assertedAt: string}} [p.newerTruth] - Incoming truth time (staged metadata `valid_from`) + the decision instant.
- * @param {Function} [p._judge]         - DI: judgeContradiction(older, newer) → {contradicts, confidence, reasoning}. Already fail-safe.
- * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string, direction: string|null, incomingAt: string|null, storedAt: string|null}>}
+ * @param {Function} [p._judge]         - DI: judgeContradiction(older, newer) → {contradicts, confidence, reasoning, ok, failCause?}. Already fail-safe.
+ * @returns {Promise<{supersede: boolean, judged: boolean, confidence: number, reasoning: string, direction: string|null, incomingAt: string|null, storedAt: string|null, verdict?: object}>}
+ *   `verdict` (the judge's whole return) is present exactly when judged.
  */
 export async function evaluateInBandSupersession({
   score,
@@ -305,5 +347,8 @@ export async function evaluateInBandSupersession({
   // above has already established that the incoming side is the newer one.
   const v = await _judge(olderText, newerText);
   const supersede = v.contradicts === true && v.confidence >= judgeThreshold;
-  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '', direction, incomingAt, storedAt };
+  // verdict: the judge's whole return (model migration Phase B, spec R1). The caller tells an
+  // errored judge (failCause 'invoke-error' → judge_error) from a decline by it, and the
+  // supersession-gate harness reads each row's own call record from it.
+  return { supersede, judged: true, confidence: v.confidence ?? 0, reasoning: v.reasoning ?? '', direction, incomingAt, storedAt, verdict: v };
 }

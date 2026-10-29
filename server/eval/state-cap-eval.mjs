@@ -12,6 +12,7 @@
  *
  * Usage (from server/, OPENAI_API_KEY in .env):
  *   node --env-file=.env eval/state-cap-eval.mjs --inputs <dir> --prompt-dir <dir> --arm old|new --out <pass1.json>
+ *     (both run forms also take --model <id> (required) and --provider <name> (default openai))
  *   node --env-file=.env eval/state-cap-eval.mjs --inputs <dir> --prompt-dir <dir> --pass2 <pass1-new.json> --out <pass2.json>
  *   node eval/state-cap-eval.mjs --aggregate --old <pass1-old.json> --new <pass1-new.json> --pass2-results <pass2.json> --out <aggregate.json>
  *
@@ -28,6 +29,7 @@ import {
   SECTION_LIMITS,
   STATE_CAP_CHARS,
 } from '../lib/state-cap.mjs';
+import { callRecord, fileSha256 } from './lib/call-record.mjs';
 
 const DAY_MS = 86_400_000;
 const RETENTION_SECTIONS = ['In flight', 'Next actions'];
@@ -319,12 +321,14 @@ export function aggregate({ newArm, oldArm, pass2 }) {
 // ---------------------------------------------------------------------------
 // CLI shim — guarded by IS_MAIN; the only place a provider is called.
 // ---------------------------------------------------------------------------
-function parseArgs(argv) {
-  const a = { arm: 'new', temperature: 0.2 };
+export function parseArgs(argv) {
+  const a = { arm: 'new', provider: 'openai' };
   for (let i = 2; i < argv.length; i++) {
     const k = argv[i];
     const next = () => argv[++i];
     if (k === '--inputs') a.inputs = next();
+    else if (k === '--model') a.model = next();
+    else if (k === '--provider') a.provider = next();
     else if (k === '--labels') a.labels = next();
     else if (k === '--prompt-dir') a.promptDir = next();
     else if (k === '--out') a.out = next();
@@ -352,36 +356,60 @@ function splitFrontmatter(md) {
   return { fm, body: md.slice(m[0].length) };
 }
 
-async function loadInputs(inputsDir, labels) {
+/**
+ * Each project's input state and summary, with the sha256 of both files as read (model migration
+ * Phase B: a run records the inputs it used, which the frozen scorer checks — the inputs are
+ * gitignored, so a clean tree does not pin them).
+ */
+export async function loadInputs(inputsDir, labels) {
   const inputs = {};
   for (const [project, lab] of Object.entries(labels)) {
-    const state = await fs.readFile(path.join(inputsDir, 'state', project, 'state.md'), 'utf8');
-    const summaryRaw = await fs.readFile(path.join(inputsDir, 'sessions', project, lab.summary), 'utf8');
+    const statePath = path.join(inputsDir, 'state', project, 'state.md');
+    const sessionPath = path.join(inputsDir, 'sessions', project, lab.summary);
+    const state = await fs.readFile(statePath, 'utf8');
+    const summaryRaw = await fs.readFile(sessionPath, 'utf8');
     const { fm, body } = splitFrontmatter(summaryRaw);
     const asOf = fm.covers_until ?? fm.valid_from;
     if (!asOf) throw new Error(`${project}: the summary has neither covers_until nor valid_from`);
-    inputs[project] = { state, summary: body, asOf, asOfSource: fm.covers_until ? 'covers_until' : 'valid_from' };
+    inputs[project] = {
+      state, summary: body, asOf, asOfSource: fm.covers_until ? 'covers_until' : 'valid_from',
+      sha256: { state: await fileSha256(statePath), session: await fileSha256(sessionPath) },
+    };
   }
   return inputs;
 }
 
-async function runMerge({ updateState, summarize, promptDir, temperature, oldStateMd, newSummary, projectId, asOf }) {
+/**
+ * One state merge through the real updateState, with summarize() pinned to the named provider and
+ * model. `call` is the merge's call record (model migration Phase B, spec R2): ok, the R1 fields
+ * and latency, or — when summarize() threw — an invoke-error with no response fields and raw null,
+ * which the scorer excludes and counts under the 5% rule instead of failing the run.
+ */
+export async function runMerge({ updateState, summarize, model, provider, promptDir, oldStateMd, newSummary, projectId, asOf }) {
   let raw = null;
+  let call = null;
   const result = await updateState(
     { oldStateMd, newSummary, projectId, asOf },
     {
       promptDir,
-      temperature,
       now: () => new Date(asOf),
       summarizeFn: async (userPrompt, opts) => {
-        const r = await summarize(userPrompt, opts);
-        raw = r.summary;
-        return r;
+        const t0 = performance.now();
+        try {
+          const r = await summarize(userPrompt, { ...opts, provider, backend: provider, model });
+          call = { ok: true, ...callRecord(r), ms: performance.now() - t0 };
+          raw = r.summary;
+          return r;
+        } catch (err) {
+          call = { ok: false, failCause: 'invoke-error', ms: performance.now() - t0 };
+          throw err;
+        }
       },
     },
   );
+  if (call?.ok === false) return { raw: null, call };
   if (result.ok === false || typeof raw !== 'string') throw new Error(`${projectId}: merge failed: ${JSON.stringify(result).slice(0, 200)}`);
-  return { raw, written: result.mergedMd, report: result.shaping, cost_usd: result.costUsd, tokens_in: result.tokensIn, tokens_out: result.tokensOut };
+  return { raw, call, written: result.mergedMd, report: result.shaping, cost_usd: result.costUsd, tokens_in: result.tokensIn, tokens_out: result.tokensOut };
 }
 
 const IS_MAIN = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -397,7 +425,10 @@ if (IS_MAIN) {
     // reduced to a count. The per-project files with text stay under docs/plans/... (gitignored).
     const ids = new Map(newRun.docs.map((d, i) => [d.project, `doc-${String(i + 1).padStart(2, '0')}`]));
     const id = project => ids.get(project) ?? project;
-    const agg = aggregate({ newArm: newRun.docs.map(d => ({ project: d.project, ...d.metrics })), oldArm: oldRun ? oldRun.docs.map(d => ({ project: d.project, ...d.metrics })) : null, pass2: p2 ? p2.docs.map(d => ({ project: d.project, ...d.conditions })) : null });
+    // A doc whose call was an invoke-error has no metrics: it is left out here and counted.
+    const scored = run => run && { ...run, docs: run.docs.filter(d => d.metrics || d.conditions), invoke_errors: run.docs.filter(d => d.call?.ok === false).length };
+    const [oldS, newS, p2S] = [scored(oldRun), scored(newRun), scored(p2)];
+    const agg = aggregate({ newArm: newS.docs.map(d => ({ project: d.project, ...d.metrics })), oldArm: oldS ? oldS.docs.map(d => ({ project: d.project, ...d.metrics })) : null, pass2: p2S ? p2S.docs.map(d => ({ project: d.project, ...d.conditions })) : null });
     const scrubMetrics = m => ({
       ...m,
       headings_missing: m.headings_missing,
@@ -405,11 +436,11 @@ if (IS_MAIN) {
       stale_carry: { units: m.stale_carry.length, stamped_supplied: m.stale_carry.filter(s => s.stamp).length },
       report: undefined,
     });
-    const numbersOnly = run => run && { arm: run.arm, model: run.model, temperature: run.temperature, ran_at: run.ran_at, docs: run.docs.map(d => ({ doc: id(d.project), as_of_source: d.as_of_source, ...scrubMetrics(d.metrics), report: d.report ? { added: d.report.added.length, aged: d.report.aged, aged_future: d.report.aged_future, bounded: d.report.bounded, trims: d.report.trims } : null })) };
+    const numbersOnly = run => run && { arm: run.arm, model: run.model, provider: run.provider, ran_at: run.ran_at, invoke_errors: run.invoke_errors, docs: run.docs.map(d => ({ doc: id(d.project), as_of_source: d.as_of_source, ...scrubMetrics(d.metrics), report: d.report ? { added: d.report.added.length, aged: d.report.aged, aged_future: d.report.aged_future, bounded: d.report.bounded, trims: d.report.trims } : null })) };
     const scrubList = xs => xs.map(x => id(String(x).split(':')[0]) + (String(x).includes(':') ? ':' + String(x).split(':').slice(1).join(':') : ''));
     const thresholds = Object.fromEntries(Object.entries(agg.thresholds).map(([k, v]) => [k, { ...v, failing: v.failing ? scrubList(v.failing) : undefined }]));
     const control = { ...agg.control, missing: agg.control.missing.map(id) };
-    const out = { schema_version: 1, spec: 'docs/plans/2026-09-25-326-state-cap-section-aware-spec.md#4.2.5', control, thresholds, all_ok: agg.all_ok, old_arm: numbersOnly(oldRun), new_arm: numbersOnly(newRun), pass2: p2 && { ran_at: p2.ran_at, docs: p2.docs.map(d => ({ doc: id(d.project), n: d.conditions.n, cond1: { ok: d.conditions.cond1.ok, failures: d.conditions.cond1.failures.length }, cond2: { ok: d.conditions.cond2.ok, failures: d.conditions.cond2.failures.length, removed_by_bound: d.conditions.cond2.removed_by_bound.length }, cond3: { ...d.conditions.cond3, dropped_mentioned: d.conditions.cond3.dropped_mentioned.length }, backdated_dropped_by_model: d.conditions.backdated_dropped_by_model, selected: d.selected.length, backdated: d.selected.filter(s => s.backdated).length, excluded_not_found: d.selected.filter(s => /not found/.test(s.excluded ?? '')).length, excluded_unstamped: d.selected.filter(s => /unstamped/.test(s.excluded ?? '')).length })) } };
+    const out = { schema_version: 1, spec: 'docs/plans/2026-09-25-326-state-cap-section-aware-spec.md#4.2.5', control, thresholds, all_ok: agg.all_ok, old_arm: numbersOnly(oldS), new_arm: numbersOnly(newS), pass2: p2S && { ran_at: p2S.ran_at, invoke_errors: p2S.invoke_errors, docs: p2S.docs.map(d => ({ doc: id(d.project), n: d.conditions.n, cond1: { ok: d.conditions.cond1.ok, failures: d.conditions.cond1.failures.length }, cond2: { ok: d.conditions.cond2.ok, failures: d.conditions.cond2.failures.length, removed_by_bound: d.conditions.cond2.removed_by_bound.length }, cond3: { ...d.conditions.cond3, dropped_mentioned: d.conditions.cond3.dropped_mentioned.length }, backdated_dropped_by_model: d.conditions.backdated_dropped_by_model, selected: d.selected.length, backdated: d.selected.filter(s => s.backdated).length, excluded_not_found: d.selected.filter(s => /not found/.test(s.excluded ?? '')).length, excluded_unstamped: d.selected.filter(s => /unstamped/.test(s.excluded ?? '')).length })) } };
     await fs.writeFile(args.out, JSON.stringify(out, null, 2) + '\n', 'utf8');
     console.log(`[state-cap-eval] aggregate written to ${args.out}: all_ok=${agg.all_ok} control=${agg.control.ok} (${agg.control.old_arm_misses} misses)`);
     for (const [k, v] of Object.entries(agg.thresholds)) console.log(`  ${v.ok ? 'PASS' : 'FAIL'} ${k}: ${v.value} (need ${v.need})${v.failing?.length ? ' failing: ' + v.failing.join(', ') : ''}`);
@@ -427,14 +458,18 @@ if (IS_MAIN) {
   if (!control.ok) { console.error(JSON.stringify(control, null, 2)); process.exit(2); }
   if (args.controlOnly) process.exit(0);
 
-  if (!process.env.OPENAI_API_KEY) { try { process.loadEnvFile?.(); } catch { /* no ./.env */ } }
-  if (!process.env.OPENAI_API_KEY) { console.error('[state-cap-eval] OPENAI_API_KEY not set - run with node --env-file=.env'); process.exit(2); }
-  process.env.UM_SUMMARIZER_PROVIDER ??= 'openai';
-  process.env.UM_SUMMARIZER_MODEL ??= 'gpt-4o-mini';
+  // The arm is named, never defaulted (model migration Phase B, spec R2): --model replaces the
+  // old UM_SUMMARIZER_MODEL ??= default, and --provider picks the summarizer backend.
+  if (!args.model) { console.error('[state-cap-eval] --model is required for a pass-1 or pass-2 run'); process.exit(2); }
+  if (args.provider === 'openai' && !process.env.OPENAI_API_KEY) { try { process.loadEnvFile?.(); } catch { /* no ./.env */ } }
+  if (args.provider === 'openai' && !process.env.OPENAI_API_KEY) { console.error('[state-cap-eval] OPENAI_API_KEY not set - run with node --env-file=.env'); process.exit(2); }
   const { updateState } = await import('../lib/update-state.mjs');
   const { summarize } = await import('../lib/summarize.mjs');
   const ranAt = new Date().toISOString();
   const projects = args.project ? [args.project] : Object.keys(labels);
+  const arm = { model: args.model, provider: args.provider };
+  // The inputs this run read, by sha256 (the scorer checks them against the freeze).
+  const provenance = { inputs_sha256: Object.fromEntries(Object.entries(inputs).map(([p, v]) => [p, v.sha256])), labels_sha256: await fileSha256(labelsPath) };
 
   if (!args.pass2) {
     if (!args.promptDir) { console.error('--prompt-dir is required for a pass-1 arm'); process.exit(2); }
@@ -442,12 +477,17 @@ if (IS_MAIN) {
     for (const project of projects) {
       const inp = inputs[project];
       const suppliedDate = ymd(inp.asOf);
-      const merge = await runMerge({ updateState, summarize, promptDir: args.promptDir, temperature: args.temperature, oldStateMd: inp.state, newSummary: inp.summary, projectId: project, asOf: inp.asOf });
+      const merge = await runMerge({ updateState, summarize, ...arm, promptDir: args.promptDir, oldStateMd: inp.state, newSummary: inp.summary, projectId: project, asOf: inp.asOf });
+      if (!merge.call.ok) {
+        docs.push({ project, as_of: inp.asOf, as_of_source: inp.asOfSource, supplied_date: suppliedDate, call: merge.call });
+        console.log(`[state-cap-eval] ${args.arm} ${project}: invoke-error`);
+        continue;
+      }
       const metrics = pass1Metrics({ raw: merge.raw, input: inp.state, labels: labels[project], suppliedDate, report: merge.report });
-      docs.push({ project, as_of: inp.asOf, as_of_source: inp.asOfSource, supplied_date: suppliedDate, metrics, report: merge.report, cost_usd: merge.cost_usd, tokens_in: merge.tokens_in, tokens_out: merge.tokens_out, raw: merge.raw, written: merge.written });
+      docs.push({ project, as_of: inp.asOf, as_of_source: inp.asOfSource, supplied_date: suppliedDate, call: merge.call, metrics, report: merge.report, cost_usd: merge.cost_usd, tokens_in: merge.tokens_in, tokens_out: merge.tokens_out, raw: merge.raw, written: merge.written });
       console.log(`[state-cap-eval] ${args.arm} ${project}: len ${metrics.length} headings ${metrics.headings}/6 inflight ${metrics.inflight_units} stamped ${metrics.all_stamped} invented ${metrics.dating.invented} retention ${metrics.retention.ok} cf ${metrics.current_focus_len}`);
     }
-    await fs.writeFile(args.out, JSON.stringify({ arm: args.arm, model: process.env.UM_SUMMARIZER_MODEL, temperature: args.temperature, prompt_dir: args.promptDir, ran_at: ranAt, control, docs }, null, 2) + '\n', 'utf8');
+    await fs.writeFile(args.out, JSON.stringify({ arm: args.arm, ...arm, ...provenance, prompt_dir: args.promptDir, ran_at: ranAt, control, docs }, null, 2) + '\n', 'utf8');
     console.log(`[state-cap-eval] pass 1 (${args.arm}) written to ${args.out}`);
   } else {
     const pass1 = JSON.parse(await fs.readFile(args.pass2, 'utf8'));
@@ -460,14 +500,25 @@ if (IS_MAIN) {
       if (!doc1) throw new Error(`${project}: not in the pass-1 file`);
       const inp = inputs[project];
       const suppliedDate = ymd(inp.asOf);
+      if (typeof doc1.raw !== 'string') {
+        // Pass 1's call for this doc was an invoke-error: there is no output to back-date.
+        docs.push({ project, supplied_date: suppliedDate, call: { ok: false, failCause: 'invoke-error', ms: 0, pass1: true } });
+        console.log(`[state-cap-eval] pass 2 ${project}: no pass-1 output (invoke-error), counted as an invoke-error`);
+        continue;
+      }
       const backdatedDate = ymd(new Date(inp.asOf).getTime() - BACKDATE_DAYS * DAY_MS);
       const { md: input2, selected } = backdateSelected(doc1.raw, lab.pass2, backdatedDate);
-      const merge = await runMerge({ updateState, summarize, promptDir, temperature: args.temperature, oldStateMd: input2, newSummary: inp.summary, projectId: project, asOf: inp.asOf });
+      const merge = await runMerge({ updateState, summarize, ...arm, promptDir, oldStateMd: input2, newSummary: inp.summary, projectId: project, asOf: inp.asOf });
+      if (!merge.call.ok) {
+        docs.push({ project, supplied_date: suppliedDate, backdated_date: backdatedDate, selected, call: merge.call });
+        console.log(`[state-cap-eval] pass 2 ${project}: invoke-error`);
+        continue;
+      }
       const conditions = pass2Conditions({ input2, raw2: merge.raw, written2: merge.written, selected, suppliedDate, backdatedDate, now: inp.asOf, asOf: inp.asOf });
-      docs.push({ project, supplied_date: suppliedDate, backdated_date: backdatedDate, selected, conditions, report: merge.report, cost_usd: merge.cost_usd, input2, raw2: merge.raw, written2: merge.written });
+      docs.push({ project, supplied_date: suppliedDate, backdated_date: backdatedDate, selected, call: merge.call, conditions, report: merge.report, cost_usd: merge.cost_usd, input2, raw2: merge.raw, written2: merge.written });
       console.log(`[state-cap-eval] pass 2 ${project}: n ${conditions.n} cond1 ${conditions.cond1.ok} cond2 ${conditions.cond2.ok} cond3 ${conditions.cond3.ok} (backdated ${selected.filter(s => s.backdated).length}/${selected.length}, dropped by model ${conditions.backdated_dropped_by_model})`);
     }
-    await fs.writeFile(args.out, JSON.stringify({ arm: 'new', pass: 2, model: process.env.UM_SUMMARIZER_MODEL, temperature: args.temperature, prompt_dir: promptDir, ran_at: ranAt, docs }, null, 2) + '\n', 'utf8');
+    await fs.writeFile(args.out, JSON.stringify({ arm: 'new', pass: 2, ...arm, ...provenance, prompt_dir: promptDir, ran_at: ranAt, docs }, null, 2) + '\n', 'utf8');
     console.log(`[state-cap-eval] pass 2 written to ${args.out}`);
   }
 }

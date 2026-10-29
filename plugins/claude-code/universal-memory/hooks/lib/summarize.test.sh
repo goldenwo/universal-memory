@@ -181,20 +181,64 @@ assert_contains "T5: stderr has telemetry line" "$T5_STDERR" "[um-summarize]"
 assert_contains "T5: stderr has tokens_in" "$T5_STDERR" "tokens_in=100"
 assert_contains "T5: stderr has tokens_out" "$T5_STDERR" "tokens_out=42"
 assert_contains "T5: stderr has cost_estimate_usd" "$T5_STDERR" "cost_estimate_usd="
+# gpt-6-luna's rates ($0.10 / $0.50 per 1M, server/lib/pricing.mjs): (100*0.0001 + 42*0.0005)/1000
+assert_contains "T5: cost estimate at the default model's rates" "$T5_STDERR" "cost_estimate_usd=0.000031"
 
 # Verify cost-log.csv was created with header + data row
 T5_COST_LOG="$UM_VAULT_DIR/.telemetry/cost-log.csv"
 if [ -f "$T5_COST_LOG" ]; then
   T5_HEADER=$(head -1 "$T5_COST_LOG")
-  T5_DATA=$(grep "gpt-4o-mini" "$T5_COST_LOG" | tail -1)
+  T5_DATA=$(grep "gpt-6-luna" "$T5_COST_LOG" | tail -1)
   assert_contains "T5: cost-log header correct" "$T5_HEADER" "timestamp,project,model,tokens_in,tokens_out,cost_usd"
-  assert_contains "T5: cost-log data has model" "$T5_DATA" "gpt-4o-mini"
+  assert_contains "T5: cost-log data has the default model" "$T5_DATA" "gpt-6-luna"
   assert_contains "T5: cost-log data has token counts" "$T5_DATA" "100,42,"
 else
   fail "T5: cost-log.csv was not created at $T5_COST_LOG"
 fi
 
-unset CLAUDE_CWD
+# ============================================================
+# Test 5b: the request body (model migration Phase B, spec R7 + addendum 3)
+#
+# The default is gpt-6-luna, the server summarizer's measured default, at the
+# summarizer's measured reasoning effort (low). A luna id, dated snapshot
+# included, carries reasoning_effort; any other id sends exactly today's body.
+# UM_SUMMARIZER_EFFORT overrides the effort, and an unknown value is ignored.
+# ============================================================
+echo "=== Test 5b: request body (model + reasoning_effort) ==="
+
+PAYLOAD_BIN="$TMPDIR_ROOT/payload_bin"
+mkdir -p "$PAYLOAD_BIN"
+cat > "$PAYLOAD_BIN/curl" <<'MOCK_EOF'
+#!/usr/bin/env bash
+# Mock curl — saves the -d body to $UM_TEST_PAYLOAD_FILE, then answers like Test 5's mock
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-d" ]; then printf '%s' "$2" > "$UM_TEST_PAYLOAD_FILE"; shift; fi
+  shift
+done
+printf '%s\n' '{"choices":[{"message":{"content":"## What happened\n\nok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}'
+printf '\n__UM_HTTP_CODE__200'
+MOCK_EOF
+chmod +x "$PAYLOAD_BIN/curl"
+
+export CLAUDE_CWD="$TMPDIR_ROOT/testproject5b"
+export UM_TEST_PAYLOAD_FILE="$TMPDIR_ROOT/payload.json"
+
+# body_of <env assignments...> — runs summarize.sh with the given env and prints
+# "model|reasoning_effort-or-ABSENT|sorted keys" from the captured body.
+body_of() {
+  rm -f "$UM_TEST_PAYLOAD_FILE" "$TMPDIR_ROOT/vault/.telemetry/"*-testproject5b.count
+  env "$@" PATH="$PAYLOAD_BIN:$PATH" bash "$SUMMARIZE" <<< "$LONG_TRANSCRIPT" >/dev/null 2>&1
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("%s|%s|%s" % (d["model"], d.get("reasoning_effort","ABSENT"), ",".join(sorted(d))))' "$UM_TEST_PAYLOAD_FILE" 2>/dev/null || echo "NO-BODY"
+}
+
+assert_eq "T5b: default → gpt-6-luna at effort low" "$(body_of -u UM_SUMMARIZE_MODEL -u UM_SUMMARIZER_EFFORT)" "gpt-6-luna|low|messages,model,reasoning_effort"
+assert_eq "T5b: UM_SUMMARIZER_EFFORT=none is sent" "$(body_of -u UM_SUMMARIZE_MODEL UM_SUMMARIZER_EFFORT=none)" "gpt-6-luna|none|messages,model,reasoning_effort"
+assert_eq "T5b: an unknown effort falls back to low" "$(body_of -u UM_SUMMARIZE_MODEL UM_SUMMARIZER_EFFORT=max)" "gpt-6-luna|low|messages,model,reasoning_effort"
+assert_eq "T5b: a dated luna snapshot takes the effort" "$(body_of -u UM_SUMMARIZER_EFFORT UM_SUMMARIZE_MODEL=gpt-5.6-luna-2026-09-01)" "gpt-5.6-luna-2026-09-01|low|messages,model,reasoning_effort"
+assert_eq "T5b: a legacy model sends today's body, no effort" "$(body_of UM_SUMMARIZE_MODEL=gpt-4.1-mini UM_SUMMARIZER_EFFORT=high)" "gpt-4.1-mini|ABSENT|messages,model"
+assert_eq "T5b: only a -YYYY-MM-DD suffix maps to luna" "$(body_of -u UM_SUMMARIZER_EFFORT UM_SUMMARIZE_MODEL=gpt-6-luna-pro)" "gpt-6-luna-pro|ABSENT|messages,model"
+
+unset CLAUDE_CWD UM_TEST_PAYLOAD_FILE
 
 # ============================================================
 # Test A2: UM_SUMMARIZER dispatch

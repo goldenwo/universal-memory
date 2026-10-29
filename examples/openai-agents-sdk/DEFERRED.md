@@ -1,6 +1,6 @@
 # Deferred to v0.4
 
-Task F2 of the v0.3 cross-platform plan — OpenAI Agents SDK example paralleling [`../openai-assistants/`](../openai-assistants/) — was deferred from v0.3.0-alpha.
+Task F2 of the v0.3 cross-platform plan — OpenAI Agents SDK example paralleling the OpenAI Assistants API example (F1; removed in v1.30.0, after OpenAI removed the Assistants API on 2026-08-26) — was deferred from v0.3.0-alpha.
 
 ## Why
 
@@ -17,5 +17,4 @@ Probably *not* an Agent SDK example. The realistic next OpenAI-side example is a
 
 ## See also
 
-- [`../openai-assistants/README.md`](../openai-assistants/README.md) §Known issues — the Assistants API deprecation that triggered this deferral.
 - Codex-integration research notes (internal) — parallel research discipline (E1 deferred Codex hooks to v0.4 for different upstream-stability reasons).

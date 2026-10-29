@@ -12,6 +12,7 @@
 // extraction is deferred to the 3rd judge — spec §5).
 
 import * as openaiP from './provider/openai.mjs';
+import { r1Record } from './provider/call-record.mjs';
 
 // The memory body is UNTRUSTED user data — it is wrapped in a delimited block and the
 // system prompt declares everything inside it data-to-evaluate, never an instruction (spec §7 R7).
@@ -27,6 +28,19 @@ const GRADER_BACKENDS = {
   openai: { invoke: openaiP.answerGradeInvoke, requires: openaiP.requires, defaults: openaiP.defaults },
 };
 
+// A blank variable counts as unset (the summarize.mjs convention), here and in answerGraderModel.
+const graderProviderName = (env) => env.UM_ANSWER_GRADER_PROVIDER || env.UM_SUMMARIZER_PROVIDER || 'openai';
+
+/**
+ * The model gradeAnswer sends when the caller names none: UM_ANSWER_GRADER_MODEL, else the
+ * resolved provider's summarizerModel (null for an unsupported provider). A's verdict in model
+ * migration Phase B equals the summarizer's (gpt-6-luna, window 2, committed 0c4ca22), so
+ * spec R4 adds no per-role field. The mq eval records this name beside its answer pass.
+ */
+export function answerGraderModel(env = process.env) {
+  return env.UM_ANSWER_GRADER_MODEL || GRADER_BACKENDS[graderProviderName(env)]?.defaults?.summarizerModel || null;
+}
+
 /**
  * Decide whether `memory` answers `query` using a configured LLM judge.
  * Fail-safe: any invoke/parse error → {answers:false, confidence:0, reasoning:'parse-fail', ok:false}.
@@ -40,25 +54,23 @@ const GRADER_BACKENDS = {
  * @param {string}   [opts.model]
  * @param {object}   [opts.client]            - pre-made provider SDK client (stub seam)
  * @param {object}   [opts._providerOverride] - test seam: object with answerGradeInvoke
- * @returns {Promise<{answers:boolean, confidence:number, reasoning:string, ok:boolean, usage:object}>}
+ * @returns {Promise<{answers:boolean, confidence:number, reasoning:string, ok:boolean, usage:object,
+ *   failCause?: 'invoke-error'|'parse-fail', requestParams?: object, servedModel?: string|null,
+ *   systemFingerprint?: string|null, reasoningTokens?: number|null, stopReason?: string|null}>}
+ *   failCause says why ok is false; the R1 fields (model migration Phase B, spec R1) are what
+ *   the call sent and how it ended, absent on an invoke-error (there was no response).
  */
 export async function gradeAnswer(query, memory, opts = {}) {
-  const providerName =
-    opts.provider ??
-    process.env.UM_ANSWER_GRADER_PROVIDER ??
-    process.env.UM_SUMMARIZER_PROVIDER ??
-    'openai';
+  const providerName = opts.provider ?? graderProviderName(process.env);
   const b = GRADER_BACKENDS[providerName];
-  const model =
-    opts.model ??
-    process.env.UM_ANSWER_GRADER_MODEL ??
-    b?.defaults?.summarizerModel;
+  const model = opts.model ?? (process.env.UM_ANSWER_GRADER_MODEL || b?.defaults?.summarizerModel);
   const invoke = opts._providerOverride?.answerGradeInvoke ?? b?.invoke;
 
-  const failsafe = (usage = { tokensIn: 0, tokensOut: 0 }) =>
-    ({ answers: false, confidence: 0, reasoning: 'parse-fail', ok: false, usage });
+  const failsafe = (failCause, usage = { tokensIn: 0, tokensOut: 0 }, record = {}) =>
+    ({ answers: false, confidence: 0, reasoning: 'parse-fail', ok: false, failCause, usage, ...record });
 
-  if (!invoke) return failsafe();
+  // Unknown provider: the call cannot be made, which is an invoke-error.
+  if (!invoke) return failsafe('invoke-error');
 
   const prompt =
     `QUERY:\n${query}\n\n` +
@@ -68,9 +80,10 @@ export async function gradeAnswer(query, memory, opts = {}) {
   try {
     raw = await invoke(prompt, { ...opts, model, client: opts.client, systemPrompt: ANSWER_SYSTEM_PROMPT });
   } catch {
-    return failsafe();
+    return failsafe('invoke-error');
   }
   const usage = raw.usage ?? { tokensIn: 0, tokensOut: 0 };
+  const record = r1Record(raw);
   try {
     const stripped = (raw.content ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
     const parsed = JSON.parse(stripped);
@@ -80,16 +93,19 @@ export async function gradeAnswer(query, memory, opts = {}) {
       reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
       ok: true,
       usage,
+      ...record,
     };
   } catch {
-    return failsafe(usage);
+    return failsafe('parse-fail', usage, record);
   }
 }
 
 // Pinned confidence threshold for the answer verdict (answers===true && confidence>=TAU_ANSWER).
 // Lives in lib (NOT eval) so the live read-path bouncer (lib/bouncer.mjs) and the eval both
 // consume it without a prod→eval import. PINNED 2026-06-22 from 2 IDENTICAL live gpt-4o-mini
-// runs (temp 0): precision 1.000 / recall 0.86 across the whole τ≥0.05 plateau.
+// runs (temp 0): precision 1.000 / recall 0.86 across the whole τ≥0.05 plateau. RE-MEASURED
+// on the gpt-6-luna grader (model migration Phase B window 2, 5 runs, committed 0c4ca22):
+// τ_answer* 0.05 again, recall 0.916 at precision 1.000.
 // RE-EVAL TRIGGER: a change to the grader model OR text-embedding-3-small invalidates this pin
 // (and the mq §4e gate floors) — re-run eval/answer-grader-eval.mjs to re-pin.
 export const TAU_ANSWER = 0.05;

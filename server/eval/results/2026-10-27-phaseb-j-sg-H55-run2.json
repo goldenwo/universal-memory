@@ -1,0 +1,2276 @@
+{
+  "timestamp": "2026-10-27T04:11:31.259Z",
+  "suite": "J-sg",
+  "judgeProvider": "anthropic",
+  "judgeModel": "claude-haiku-5-5",
+  "embeddingModel": "text-embedding-3-small",
+  "floor": 0.84,
+  "ceiling": 1,
+  "runs": 1,
+  "judgeThreshold": 0,
+  "fixtureSha256": {
+    "eval/held-out-contradiction-set.jsonl": "b25487f00fbe07701b9093d9db26450ca48deb66bec749a915ec27b600bbeac4",
+    "eval/over-supersession-set.jsonl": "61ffda4ce2cf0c428af9e3f20065b8e656a4880167d8316a6c23a8d872b7c2d9",
+    "test/fixtures/dedup-labels.json": "84fb27c0066b5e293b25887f5a65712849f250af77a9391d9f6da49542033132"
+  },
+  "inBandRef": "eval/results/2026-06-19-supersession-gate-eval-ceil1.json",
+  "integrity": {
+    "ok": true,
+    "missing": [],
+    "extra": []
+  },
+  "perRow": [
+    {
+      "id": "ho01",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8513,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts are present-tense assertions about the same subject (the team's message queue) with no temporal scoping, and they name different systems. A team would normally use one primary message queue at a time, so the newer statement logically invalidates the older one. Some uncertainty remains because the facts could describe different services or a migration in progress, but neither is marked as past or time-scoped.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1306.2057999999997
+        }
+      ],
+      "older": "Our message queue is Kafka",
+      "newer": "Our message queue is RabbitMQ"
+    },
+    {
+      "id": "ho02",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8572,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.7,
+          "reasoning": "Both facts are untimed present-tense statements about the same subject ('the cache layer') and name different single cache technologies. A cache layer typically uses one of these, so the newer fact likely invalidates the older. Confidence is moderate because a system could use both (e.g., a hybrid or mid-migration setup), and neither fact is explicitly time-scoped.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2076.5312999999996
+        }
+      ],
+      "older": "The cache layer uses Redis",
+      "newer": "The cache layer uses Memcached"
+    },
+    {
+      "id": "ho03",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8014,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our CI runs on Jenkins",
+      "newer": "Our CI runs on CircleCI"
+    },
+    {
+      "id": "ho04",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7675,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The frontend bundler is Webpack",
+      "newer": "The frontend bundler is Vite"
+    },
+    {
+      "id": "ho05",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7013,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our ORM is Prisma",
+      "newer": "Our ORM is TypeORM"
+    },
+    {
+      "id": "ho06",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.7037,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The app is hosted on Vercel",
+      "newer": "The app is hosted on Netlify"
+    },
+    {
+      "id": "ho07",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8172,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our primary backend language is Java",
+      "newer": "Our primary backend language is Kotlin"
+    },
+    {
+      "id": "ho08",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.9209,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts assert a present-tense, non-time-scoped schedule for the same recurring event (the daily standup) with incompatible times (9am vs 11am). They cannot both be true in the same temporal frame, so the newer fact invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 886.4694999999992
+        }
+      ],
+      "older": "Our daily standup is at 9am",
+      "newer": "Our daily standup is at 11am"
+    },
+    {
+      "id": "ho09",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.8835,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.8,
+          "reasoning": "Both facts are stated in the present tense with no time scoping and describe the same attribute (the location of the person's desk). A desk cannot be on two different floors at once, so the newer fact logically invalidates the older one, though a relocation is plausible, which is why confidence is not maximal.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1160.7848999999997
+        }
+      ],
+      "older": "My desk is on the third floor",
+      "newer": "My desk is on the eighth floor"
+    },
+    {
+      "id": "ho10",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "finance",
+      "cosine": 0.8488,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts are present-tense assertions about the same attribute (the user's main credit card) with incompatible values (Visa vs Mastercard). Neither is time-scoped, so they cannot both be true in the same temporal frame; the newer fact logically invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 899.893
+        }
+      ],
+      "older": "My main credit card is a Visa",
+      "newer": "My main credit card is a Mastercard"
+    },
+    {
+      "id": "ho11",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "health",
+      "cosine": 0.7225,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My physician is Dr. Patel",
+      "newer": "My physician is Dr. Nguyen"
+    },
+    {
+      "id": "ho12",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "travel",
+      "cosine": 0.812,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My layover is in Dubai",
+      "newer": "My layover is in Doha"
+    },
+    {
+      "id": "ho13",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "food",
+      "cosine": 0.8279,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My go-to cuisine is Thai",
+      "newer": "My go-to cuisine is Mexican"
+    },
+    {
+      "id": "ho14",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "pets",
+      "cosine": 0.6059,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My cat is named Max",
+      "newer": "My cat is named Cooper"
+    },
+    {
+      "id": "ho15",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "contact",
+      "cosine": 0.65,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My area code is 415",
+      "newer": "My area code is 312"
+    },
+    {
+      "id": "ho16",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.767,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The public API uses GraphQL",
+      "newer": "The public API uses REST"
+    },
+    {
+      "id": "ho17",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.8219,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The service listens on port 8080",
+      "newer": "The service listens on port 9090"
+    },
+    {
+      "id": "ho18",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.9372,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts are present-tense statements about the same subject (the current sprint length) with incompatible values: two weeks versus three weeks. Neither is time-scoped, so they cannot both be true for the same frame, and the newer fact most likely supersedes the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1327.4839000000002
+        }
+      ],
+      "older": "Our sprint is two weeks long",
+      "newer": "Our sprint is three weeks long"
+    },
+    {
+      "id": "ho19",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "finance",
+      "cosine": 0.9028,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts are stated in the present tense with no time scope and assert the same attribute (monthly rent) with different values. Both cannot be true for the same period, so the newer fact invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1679.6494000000002
+        }
+      ],
+      "older": "My monthly rent is 1800 dollars",
+      "newer": "My monthly rent is 2400 dollars"
+    },
+    {
+      "id": "ho20",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.89,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense statements about the same server's RAM capacity, with no time scoping. A server cannot have both 16 GB and 64 GB of RAM at the same time, so the newer fact logically invalidates the older one. The likely explanation is a hardware upgrade, but neither fact is marked as past, so they assert the same temporal frame.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1696.8046000000004
+        }
+      ],
+      "older": "The server has 16 gigabytes of RAM",
+      "newer": "The server has 64 gigabytes of RAM"
+    },
+    {
+      "id": "ho21",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "work",
+      "cosine": 0.8608,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts state the same present-tense frame: the project deadline is a single date. Two different dates for the same deadline cannot both be currently true, so the newer fact invalidates the older one. Neither fact is time-scoped or past-tense, so the temporal exception does not apply. Some residual uncertainty remains because the deadline could have been legitimately moved, which is what a supersession would reflect.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 976.2218000000003
+        }
+      ],
+      "older": "The project deadline is March 15th",
+      "newer": "The project deadline is April 20th"
+    },
+    {
+      "id": "ho22",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "travel",
+      "cosine": 0.7797,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My seat number is 14A",
+      "newer": "My seat number is 22F"
+    },
+    {
+      "id": "ho23",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "health",
+      "cosine": 0.8184,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My appointment is at 2pm",
+      "newer": "My appointment is at 4pm"
+    },
+    {
+      "id": "ho24",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "contact",
+      "cosine": 0.824,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "My phone extension is 4421",
+      "newer": "My phone extension is 7789"
+    },
+    {
+      "id": "ho25",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "home",
+      "cosine": 0.8856,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.8,
+          "reasoning": "Both facts make present-tense claims about the same attribute (number of bedrooms the person has) with no temporal scoping, so the numbers are mutually exclusive. The newer fact likely supersedes the older one, though a move or renovation could explain both at different times, so confidence is not maximal.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 961.0654999999997
+        }
+      ],
+      "older": "I have two bedrooms",
+      "newer": "I have three bedrooms"
+    },
+    {
+      "id": "ho26",
+      "kind": "capture",
+      "group": "single-slot-swap",
+      "lane": "dev",
+      "cosine": 0.9138,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense statements about the same attribute (the request timeout) with the same temporal frame, asserting different mutually exclusive values. The newer value logically invalidates the older one, with no time-scoping indicating both were true.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1174.5607
+        }
+      ],
+      "older": "The request timeout is 30 seconds",
+      "newer": "The request timeout is 60 seconds"
+    },
+    {
+      "id": "ho27",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.896,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are stated in the same present-tense frame about the same attribute (connection pool size) and assign different values (10 vs 50). A single pool cannot have both sizes at once, so the newer fact logically invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 895.4816999999994
+        }
+      ],
+      "older": "The connection pool size is 10",
+      "newer": "The connection pool size is 50"
+    },
+    {
+      "id": "ho28",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.8958,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.8,
+          "reasoning": "Both facts are present-tense statements about the same production runtime, asserting different Node.js major versions. Neither is time-scoped, so they cannot both be true in the same frame. The newer fact plausibly supersedes the older one (an upgrade), though the absence of an explicit upgrade marker leaves some residual uncertainty.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 945.5601999999999
+        }
+      ],
+      "older": "We run Node.js 18 in production",
+      "newer": "We run Node.js 22 in production"
+    },
+    {
+      "id": "ho29",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "finance",
+      "cosine": 0.8996,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts are stated in the present tense with no time scoping and assert the same attribute (current 401k contribution rate) with incompatible values (6% vs 10%). They cannot both be true for the same present frame, so the newer fact invalidates the older one. Confidence is not maximal because the user could have changed the rate, which the newer fact would then reflect as a supersession rather than a true conflict.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1214.8925999999992
+        }
+      ],
+      "older": "My 401k contribution is 6 percent",
+      "newer": "My 401k contribution is 10 percent"
+    },
+    {
+      "id": "ho30",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "work",
+      "cosine": 0.8709,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts are present-tense statements about the same quantity (current full-time engineering headcount) with no time scoping, and they assign different values (8 vs. 20). The newer value would invalidate the older one, though team size can change over time, so some uncertainty remains about whether both were meant as snapshots at different dates.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1140.9267
+        }
+      ],
+      "older": "Our engineering team has 8 full-time members",
+      "newer": "Our engineering team has 20 full-time members"
+    },
+    {
+      "id": "ho31",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "home",
+      "cosine": 0.903,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense statements about the same current state (the thermostat's setting) with different values. A thermostat can only be set to one temperature at a time, so the newer fact logically supersedes the older one. Neither is time-scoped or past-tense, so they assert the same temporal frame.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 931.2852999999996
+        }
+      ],
+      "older": "My thermostat is set to 68 degrees",
+      "newer": "My thermostat is set to 72 degrees"
+    },
+    {
+      "id": "ho32",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.8968,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense assertions about the same subject (the API version) with no time-scoping, and they assign mutually exclusive values (v2 vs v3). The newer fact logically invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 899.3479000000007
+        }
+      ],
+      "older": "The API version is v2",
+      "newer": "The API version is v3"
+    },
+    {
+      "id": "ho33",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8882,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.95,
+          "reasoning": "Both facts are present-tense statements about the same temporal frame (current primary datastore for all services). They assign different values (DynamoDB vs Postgres) to the same attribute with the 'all services' scope, so they cannot both be true; the newer fact explicitly negates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1021.7159000000001
+        }
+      ],
+      "older": "Our primary datastore is DynamoDB for all services",
+      "newer": "Our primary datastore is Postgres for all services, not DynamoDB"
+    },
+    {
+      "id": "ho34",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8486,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense, untimed statements about the same subject (the checkout service's implementation language). The newer fact explicitly asserts Go and denies Ruby, so both cannot be true in the same temporal frame. No past-tense or dated scoping is present, so this is a genuine contradiction rather than an evolution that could coexist.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 966.9438000000009
+        }
+      ],
+      "older": "The checkout service is written in Ruby",
+      "newer": "The checkout service is written in Go, not Ruby"
+    },
+    {
+      "id": "ho35",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8889,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense assertions about the same subject (the repository's default branch name) with no time scoping. The newer fact states the default is 'main, not master', directly contradicting the older claim that it is 'master'.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 865.3976000000002
+        }
+      ],
+      "older": "The default branch is called master",
+      "newer": "The default branch is called main, not master"
+    },
+    {
+      "id": "ho36",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "work",
+      "cosine": 0.8554,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense statements about the same temporal frame describing the location of the main office. They assign different locations (downtown tower vs. riverside tower), and the newer fact explicitly negates the older one, so they cannot both be true now.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 827.5307999999986
+        }
+      ],
+      "older": "Our main office is located in the downtown tower",
+      "newer": "Our main office is located in the riverside tower, not the downtown tower"
+    },
+    {
+      "id": "ho37",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8523,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.8,
+          "reasoning": "Both facts are stated in the present tense with no time scoping. The older fact says users sign in with passwords, and the newer fact says they sign in with passkeys, not passwords. These cannot both hold for the same present-tense frame. Confidence is not higher because the platform could have supported both methods, or the newer fact could describe a recent migration that the older fact predates.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2246.2291000000005
+        }
+      ],
+      "older": "Users sign in to the platform with passwords",
+      "newer": "Users sign in to the platform with passkeys, not passwords"
+    },
+    {
+      "id": "ho38",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "finance",
+      "cosine": 0.905,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.93,
+          "reasoning": "Both facts are present-tense statements about the same attribute (the pay schedule for base salary). Monthly and biweekly are mutually exclusive, and the newer fact explicitly negates the older one, so the newer fact invalidates the older one. Neither statement is time-scoped, so the temporal-frame exception does not apply.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1033.651100000001
+        }
+      ],
+      "older": "My base salary is paid on a monthly schedule",
+      "newer": "My base salary is paid on a biweekly schedule, not monthly"
+    },
+    {
+      "id": "ho39",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "dev",
+      "cosine": 0.8406,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense statements about the same architectural frame (how the frontend communicates with the backend). REST and gRPC are mutually exclusive as the primary transport, and the newer fact explicitly negates REST, so the newer fact invalidates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1665.5548
+        }
+      ],
+      "older": "The frontend talks to the backend over REST",
+      "newer": "The frontend talks to the backend over gRPC, not REST"
+    },
+    {
+      "id": "ho40",
+      "kind": "capture",
+      "group": "multi-clause",
+      "lane": "health",
+      "cosine": 0.8556,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense, habitual statements about the same routine (when the person takes their medication) with no time-scoping or past-tense framing. The newer fact explicitly states 'at night, not in the morning', directly conflicting with the older 'in the morning'. Such a change is most plausibly a genuine update to the routine, so the older fact is invalidated.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1173.301800000001
+        }
+      ],
+      "older": "I take my medication in the morning",
+      "newer": "I take my medication at night, not in the morning"
+    },
+    {
+      "id": "ho41",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.9396,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts make present-tense claims about the same subject (the API rate limit) with no time scoping, and they assign incompatible values (100 vs. 500 requests per minute). The newer fact logically invalidates the older one, though the 'ordering' of createdAt does not itself establish this.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2116.6642999999985
+        }
+      ],
+      "older": "The API rate limit is 100 requests per minute",
+      "newer": "The API rate limit is 500 requests per minute"
+    },
+    {
+      "id": "ho42",
+      "kind": "capture",
+      "group": "numeric-swap",
+      "lane": "dev",
+      "cosine": 0.9096,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.85,
+          "reasoning": "Both facts are present-tense, undated statements about the same attribute (the primary cloud region) with different values. A single primary region cannot be both us-east-1 and eu-west-1 in the same temporal frame, so the newer fact logically invalidates the older one. Some residual uncertainty remains because the newer fact could reflect a migration, but neither fact is marked as past-tense or time-scoped.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1216.4261999999999
+        }
+      ],
+      "older": "Our primary cloud region is us-east-1",
+      "newer": "Our primary cloud region is eu-west-1"
+    },
+    {
+      "id": "os001",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.9087,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "AWS Solutions Architect and AWS Developer are distinct certifications, and a person can hold both at once. Both facts are present-tense with no temporal conflict, so the newer fact does not invalidate the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 882.6766000000007
+        }
+      ],
+      "older": "I hold the AWS Solutions Architect certification",
+      "newer": "I hold the AWS Developer certification"
+    },
+    {
+      "id": "os002",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8604,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense capability statements, and an app can support both light and dark mode at once. The newer fact adds a capability rather than invalidating the older one, so they are not contradictory.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2182.2338999999993
+        }
+      ],
+      "older": "Our app supports light mode",
+      "newer": "Our app supports dark mode"
+    },
+    {
+      "id": "os003",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8484,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.3,
+          "reasoning": "Both facts are untimed present-tense statements, so they share a temporal frame. However, an app can run on both iOS and Android, so the newer fact does not logically invalidate the older one. Given the fail-safe preference, this is not treated as a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1502.2735999999986
+        }
+      ],
+      "older": "The app runs on iOS",
+      "newer": "The app runs on Android"
+    },
+    {
+      "id": "os004",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8351,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "We operate in the us-east-1 region",
+      "newer": "We operate in the eu-west-1 region"
+    },
+    {
+      "id": "os005",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.8872,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both facts are present-tense claims about holding different AWS certifications. A person can hold multiple AWS certifications at once, so the newer fact does not invalidate the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 905.3724999999995
+        }
+      ],
+      "older": "I hold the AWS Solutions Architect certification",
+      "newer": "I hold the AWS SysOps Administrator certification"
+    },
+    {
+      "id": "os006",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.8795,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.8,
+          "reasoning": "Being open on weekdays and being open on weekends are not mutually exclusive. A store can operate on both, so the newer fact does not logically invalidate the older one. Both can be true at once.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1252.0307999999986
+        }
+      ],
+      "older": "The store is open on weekdays",
+      "newer": "The store is open on weekends"
+    },
+    {
+      "id": "os007",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8301,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Reports can be exported as PDF",
+      "newer": "Reports can be exported as CSV"
+    },
+    {
+      "id": "os008",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "dev",
+      "cosine": 0.9456,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact adds integration tests to the pipeline without negating the older claim that unit tests run. Both can be true at once, so this is an extension or refinement, not a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 744.8647999999994
+        }
+      ],
+      "older": "Our CI pipeline runs unit tests",
+      "newer": "Our CI pipeline runs unit tests and integration tests"
+    },
+    {
+      "id": "os009",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "dev",
+      "cosine": 0.9038,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "The newer fact adds Kubernetes to the deployment stack without negating Docker. Both can be true at once: Docker is still used, with Kubernetes added as an orchestration layer. This is an elaboration, not a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 867.1984000000011
+        }
+      ],
+      "older": "We deploy the service with Docker",
+      "newer": "We deploy the service with Docker and Kubernetes"
+    },
+    {
+      "id": "os010",
+      "kind": "decline",
+      "group": "additive-superset",
+      "lane": "personal",
+      "cosine": 0.8609,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "The newer fact adds a second instrument (violin) while retaining the piano learning claim. Both can be true simultaneously, so this is an addition rather than a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 775.2029000000002
+        }
+      ],
+      "older": "I'm learning to play the piano",
+      "newer": "I'm learning to play the piano and the violin"
+    },
+    {
+      "id": "os011",
+      "kind": "decline",
+      "group": "restatement-duplicate",
+      "lane": "dev",
+      "cosine": 0.8621,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "Both facts assert the same thing in different word order: the production database is PostgreSQL. They are paraphrases, not conflicting claims, so the newer fact does not invalidate the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 889.5246000000006
+        }
+      ],
+      "older": "Our production database is PostgreSQL",
+      "newer": "PostgreSQL is our production database"
+    },
+    {
+      "id": "os012",
+      "kind": "decline",
+      "group": "restatement-duplicate",
+      "lane": "dev",
+      "cosine": 0.9084,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "Both facts assert the same thing: the cache layer uses Redis. They are paraphrases with no conflicting claim, so nothing is invalidated.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2027.7131000000008
+        }
+      ],
+      "older": "The cache layer uses Redis",
+      "newer": "We use Redis for the cache layer"
+    },
+    {
+      "id": "os013",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "finance",
+      "cosine": 0.8061,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I have a Visa card on file",
+      "newer": "I have a Mastercard card on file"
+    },
+    {
+      "id": "os014",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "personal",
+      "cosine": 0.7907,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I am fluent in Spanish",
+      "newer": "I am fluent in Portuguese"
+    },
+    {
+      "id": "os015",
+      "kind": "decline",
+      "group": "different-attribute-same-subject",
+      "lane": "dev",
+      "cosine": 0.7164,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our production database is PostgreSQL",
+      "newer": "Our production database stores about 2 terabytes of data"
+    },
+    {
+      "id": "os016",
+      "kind": "decline",
+      "group": "different-subject-same-structure",
+      "lane": "dev",
+      "cosine": 0.6332,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The frontend is built with React",
+      "newer": "The backend is built with Go"
+    },
+    {
+      "id": "os017",
+      "kind": "boundary",
+      "group": "version-upgrade",
+      "lane": "dev",
+      "cosine": 0.8422,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.8,
+          "reasoning": "Both facts are present-tense statements about the same frame (the production PostgreSQL version). Both cannot be true at once unless the company runs multiple production clusters on different versions, which neither fact states. The newer fact most likely reflects an upgrade that supersedes the older version.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2254.7237000000005
+        }
+      ],
+      "older": "We run PostgreSQL 14 in production",
+      "newer": "We run PostgreSQL 16 in production"
+    },
+    {
+      "id": "os018",
+      "kind": "boundary",
+      "group": "version-upgrade",
+      "lane": "dev",
+      "cosine": 0.9111,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": true,
+          "confidence": 0.7,
+          "reasoning": "Both facts are stated in the present tense about the same subject and attribute, with no time scoping. An app normally has a single deployment target, so 'targets iOS 16' and 'targets iOS 17' are mutually exclusive, and the newer fact likely supersedes the older one. Some confidence is withheld because 'targets' could loosely mean supporting multiple versions.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 3190.6867
+        }
+      ],
+      "older": "The mobile app targets iOS 16",
+      "newer": "The mobile app targets iOS 17"
+    },
+    {
+      "id": "os019",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.8059,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "We support payments in USD",
+      "newer": "We support payments in EUR"
+    },
+    {
+      "id": "os020",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "dev",
+      "cosine": 0.7324,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Our SDK is available for Python",
+      "newer": "Our SDK is available for Ruby"
+    },
+    {
+      "id": "os021",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "contact",
+      "cosine": 0.7176,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I'm reachable on Signal",
+      "newer": "I'm reachable on WhatsApp"
+    },
+    {
+      "id": "os022",
+      "kind": "decline",
+      "group": "coexisting-multi-value",
+      "lane": "work",
+      "cosine": 0.9632,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.3,
+          "reasoning": "Both facts are present-tense and about the same venue, but a venue can have parking on more than one side, so the newer fact does not logically invalidate the older one. Without evidence that the north side was the only parking, they can both be true.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1150.1389999999992
+        }
+      ],
+      "older": "The venue has parking on the north side",
+      "newer": "The venue has parking on the south side"
+    },
+    {
+      "id": "dup01",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.7661,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Rust is great.",
+      "newer": "rust is great"
+    },
+    {
+      "id": "dup02",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9755,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "The two facts are identical in content, differing only by a trailing period. They assert the same port for the same service in the same present-tense frame, so they are consistent rather than contradictory.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1758.6976999999988
+        }
+      ],
+      "older": "Service auth runs on port 8080",
+      "newer": "Service auth runs on port 8080."
+    },
+    {
+      "id": "dup03",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9604,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "The two facts are identical in meaning; the only difference is a trailing period. They are restatements, not contradictions.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 665.3634999999995
+        }
+      ],
+      "older": "To deploy, run npm run deploy",
+      "newer": "To deploy, run npm run deploy."
+    },
+    {
+      "id": "dup04",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9435,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "Both facts assert the same preference for Rust, merely phrased differently. They are paraphrases of one another, not conflicting claims, so nothing is invalidated.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 729.4030999999995
+        }
+      ],
+      "older": "user prefers Rust",
+      "newer": "user prefers the Rust language"
+    },
+    {
+      "id": "dup05",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9828,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "Both facts state the same thing: the users service runs on port 3001. 'on' and 'at' are equivalent phrasing, so the newer fact restates rather than contradicts the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1017.0374000000011
+        }
+      ],
+      "older": "Service users runs on port 3001",
+      "newer": "Service users runs at port 3001"
+    },
+    {
+      "id": "dup06",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9416,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "Both facts state the same instruction (run unit tests with npm test); the wording differs only trivially and nothing is invalidated.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 783.340900000001
+        }
+      ],
+      "older": "Run the unit tests with npm test",
+      "newer": "Run unit tests with npm test"
+    },
+    {
+      "id": "dup07",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9795,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "The two facts are essentially identical: same person, same date, same event (joining the team). The only difference is a trailing period, so they are consistent restatements rather than contradictory claims.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 853.4481999999989
+        }
+      ],
+      "older": "On 2024-09-15, Maya joined the team.",
+      "newer": "On 2024-09-15, Maya joined the team"
+    },
+    {
+      "id": "dup08",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9842,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "The two facts are identical, so they assert the same thing rather than conflicting. A repeated statement is not a contradiction; nothing is logically invalidated.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2693.9928999999993
+        }
+      ],
+      "older": "auth bug on login\n",
+      "newer": "auth bug on login"
+    },
+    {
+      "id": "dup09",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9715,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "Both facts describe the same event (a 401 error on POST /login) with only a rephrasing of wording; they are consistent and not contradictory.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 727.5060999999987
+        }
+      ],
+      "older": "User reported a 401 on POST /login",
+      "newer": "User reported a 401 on the POST /login endpoint"
+    },
+    {
+      "id": "dup10",
+      "kind": "dup",
+      "group": "identical",
+      "lane": "dev",
+      "cosine": 0.9494,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "The two facts are identical in meaning, differing only in capitalization. They do not conflict; the newer fact simply restates the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 691.8571000000011
+        }
+      ],
+      "older": "Lint via npm run lint",
+      "newer": "lint via npm run lint"
+    },
+    {
+      "id": "dup11",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8809,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.02,
+          "reasoning": "Both facts state the same preference (Rust) in the same present-tense frame. They are paraphrases that are consistent with each other, not contradictory, so nothing is invalidated.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 618.1594000000005
+        }
+      ],
+      "older": "I prefer the Rust programming language.",
+      "newer": "My preferred programming language is Rust."
+    },
+    {
+      "id": "dup12",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6927,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "I drink my coffee black, no sugar.",
+      "newer": "Black coffee, no sugar — that's how I take it."
+    },
+    {
+      "id": "dup13",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8695,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "Both facts assert the same thing: Neovim is the person's primary/preferred editor. They are consistent paraphrases, not contradictions.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 672.6019000000015
+        }
+      ],
+      "older": "My editor of choice is Neovim.",
+      "newer": "I use Neovim as my primary editor."
+    },
+    {
+      "id": "dup14",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8601,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.98,
+          "reasoning": "Both facts state the same endpoint, http://auth.internal:8080, in different wording. They are consistent and the newer fact does not invalidate the older one.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 2011.7119000000002
+        }
+      ],
+      "older": "The auth service is reachable at http://auth.internal:8080",
+      "newer": "Auth service runs on http://auth.internal:8080."
+    },
+    {
+      "id": "dup15",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8772,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "Both facts assert the same thing in different wording: Postgres is the primary application database. There is no conflict, so this is a paraphrase rather than a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 747.3315000000002
+        }
+      ],
+      "older": "We use Postgres for the primary application database.",
+      "newer": "Postgres is the primary database for our app."
+    },
+    {
+      "id": "dup16",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6886,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "The build is driven by Vite.",
+      "newer": "Vite handles our build pipeline."
+    },
+    {
+      "id": "dup17",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.9012,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "Both facts assert the same thing: staging.example.com is the staging environment. The newer fact is a rephrasing, not a contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1151.663700000001
+        }
+      ],
+      "older": "The staging environment lives at staging.example.com.",
+      "newer": "staging.example.com is our staging environment."
+    },
+    {
+      "id": "dup18",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8091,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Run the dev server with `npm start`.",
+      "newer": "`npm start` boots the dev server."
+    },
+    {
+      "id": "dup19",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7692,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Tests are executed via `npm test`.",
+      "newer": "Use `npm test` to run the test suite."
+    },
+    {
+      "id": "dup20",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7964,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Run database migrations with `npx knex migrate:latest`.",
+      "newer": "`npx knex migrate:latest` applies pending migrations."
+    },
+    {
+      "id": "dup21",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8212,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Linting is done by `npm run lint`.",
+      "newer": "Use `npm run lint` to lint the project."
+    },
+    {
+      "id": "dup22",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8429,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both facts describe the same event in 2024 (relocating to Berlin) and are consistent with each other; neither invalidates the other, so there is no contradiction.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 841.143
+        }
+      ],
+      "older": "She moved to Berlin in 2024.",
+      "newer": "Berlin became her home in 2024."
+    },
+    {
+      "id": "dup23",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8657,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.95,
+          "reasoning": "Both facts describe the same event (Maya becoming staff engineer last quarter), so they are consistent and paraphrases rather than contradictory. Neither invalidates the other.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 823.6549999999988
+        }
+      ],
+      "older": "Maya was promoted to staff engineer last quarter.",
+      "newer": "Last quarter, Maya's title changed to staff engineer."
+    },
+    {
+      "id": "dup24",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.9151,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.97,
+          "reasoning": "Both facts describe the same past event (attending QCon SF in November). The newer fact is time-scoped ('this past November') and is consistent with the older fact; they are paraphrases, not contradictions.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1060.2281000000003
+        }
+      ],
+      "older": "I attended QCon SF in November.",
+      "newer": "Was at QCon SF this past November."
+    },
+    {
+      "id": "dup25",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8794,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.95,
+          "reasoning": "Both facts describe the same past trip (two weeks in Japan in October) with compatible phrasing; they are paraphrases of one event, not conflicting claims. Neither contradicts the other.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 935.5881000000008
+        }
+      ],
+      "older": "Took a two-week trip to Japan in October.",
+      "newer": "Spent two weeks in Japan during October."
+    },
+    {
+      "id": "dup26",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6966,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "User reported authentication failure on the /login endpoint, returning HTTP 401.",
+      "newer": "auth bug on login — getting 401"
+    },
+    {
+      "id": "dup27",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.6572,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Reminder: deploy is scheduled for Friday at 4pm UTC.",
+      "newer": "deploy fri 4pm utc"
+    },
+    {
+      "id": "dup28",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7331,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Bug report: the search endpoint returns stale results after a write.",
+      "newer": "search returns stale data after writes"
+    },
+    {
+      "id": "dup29",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.5157,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Feature request: add Markdown export to the report page.",
+      "newer": "want md export on reports"
+    },
+    {
+      "id": "dup30",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.5947,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "Status update: ingestion pipeline migration is in code review.",
+      "newer": "ingestion migration in review"
+    },
+    {
+      "id": "dup31",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7307,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "tool_result: ```\nERROR  Connection refused at db:5432\n```\nLooks like the DB is unreachable.",
+      "newer": "DB at db:5432 is unreachable — connection refused."
+    },
+    {
+      "id": "dup32",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7892,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "**TL;DR**: we're switching from `webpack` to `vite` next sprint.\n— posted in #frontend",
+      "newer": "switching webpack to vite next sprint"
+    },
+    {
+      "id": "dup33",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7092,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "```\n$ npm test\n[FAIL] auth.test.js\n```\nThe auth test is failing on main.",
+      "newer": "auth test failing on main"
+    },
+    {
+      "id": "dup34",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.8542,
+      "inBand": true,
+      "runs": [
+        {
+          "judged": true,
+          "contradicts": false,
+          "confidence": 0.9,
+          "reasoning": "Both facts express the same intent: check the qdrant 1.13 changelog before bumping. The newer fact is a restatement/refinement of the older one, not a logical invalidation. No temporal or factual conflict exists.",
+          "ok": true,
+          "requestParams": {
+            "model": "claude-haiku-5-5",
+            "max_tokens": 5120
+          },
+          "servedModel": "claude-haiku-5-5",
+          "systemFingerprint": null,
+          "reasoningTokens": null,
+          "stopReason": "end_turn",
+          "ms": 1550.0093000000015
+        }
+      ],
+      "older": "We're going to bump qdrant to 1.13… actually wait, let me check the changelog first.",
+      "newer": "Need to check qdrant 1.13 changelog before we bump."
+    },
+    {
+      "id": "dup35",
+      "kind": "dup",
+      "group": "paraphrase",
+      "lane": "dev",
+      "cosine": 0.7445,
+      "inBand": false,
+      "runs": [
+        {
+          "judged": false
+        }
+      ],
+      "older": "deploy on friday\n\n\n— sent from mobile",
+      "newer": "Deploy is scheduled for Friday."
+    }
+  ]
+}

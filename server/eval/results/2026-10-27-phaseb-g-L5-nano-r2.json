@@ -1,0 +1,5283 @@
+{
+  "timestamp": "2026-10-27T03:46:03.577Z",
+  "fixtures": [
+    "eval/production-noise-set.jsonl",
+    "eval/collision-slice.jsonl",
+    "eval/extraction-set.jsonl"
+  ],
+  "fixtureSha256": {
+    "eval/production-noise-set.jsonl": "7391a26745d14aa45e6601ba13edd15bc1f3867776a2cb2b5e46f043b12e57c0",
+    "eval/collision-slice.jsonl": "106036a2e3d4aa88b669b9e702aed816c07818f26aa28a228e975e7e6ce77cf6",
+    "eval/extraction-set.jsonl": "e0d00401e4526bd12cc69c8956f51a8d93c8e42b11fd43736418c4c6a800771a"
+  },
+  "mode": "judged",
+  "judgeModel": "gpt-5.6-luna",
+  "factsProvider": "control:replay",
+  "factsModel": "replay",
+  "factsConfig": {
+    "temperature": 0
+  },
+  "pinnable": true,
+  "extraction": {
+    "rows": 132,
+    "graded": 132,
+    "parseFails": 0,
+    "precision": 1,
+    "recall": 0.896,
+    "f1": 0.945,
+    "noiseAbstained": 9,
+    "noiseTotal": 76,
+    "perRow": [
+      {
+        "id": "n01",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n02",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n04",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n05",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n07",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n09",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n10",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n12",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n13",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n14",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n15",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n16",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n17",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n18",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n19",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n20",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n21",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n24",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n25",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 4
+      },
+      {
+        "id": "n26",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n27",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n28",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n29",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n30",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n33",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n34",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n35",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n36",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n37",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n38",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n39",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n40",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n41",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n42",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n43",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n44",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n45",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n46",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n47",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n48",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n49",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n50",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n51",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n52",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n53",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n54",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n55",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 3
+      },
+      {
+        "id": "n56",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n57",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n58",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n59",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n60",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n61",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n62",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n63",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n64",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "n65",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n66",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n67",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 2
+      },
+      {
+        "id": "n68",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "n69",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n70",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n71",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n72",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n73",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n74",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 5,
+        "extractedSupported": 5
+      },
+      {
+        "id": "n75",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n76",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n77",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n78",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "n79",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "n80",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c01",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c02",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c03",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c04",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c05",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 4,
+        "extractedSupported": 4
+      },
+      {
+        "id": "c06",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c07",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c08",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c10",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "c11",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "c12",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e01",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e02",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e03",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e04",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e05",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e06",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e07",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e08",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e09",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e10",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      },
+      {
+        "id": "e11",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 1
+      },
+      {
+        "id": "e12",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e13",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e14",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e15",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e16",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e17",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e18",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e19",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e20",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e21",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e22",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e23",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e24",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e25",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e26",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e27",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e28",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e29",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e30",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e31",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e32",
+        "ok": true,
+        "noiseRow": true,
+        "extractedTotal": 0
+      },
+      {
+        "id": "e33",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e34",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e35",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 2,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e36",
+        "ok": true,
+        "goldTotal": 2,
+        "goldMatched": 0,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e37",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 2,
+        "extractedSupported": 2
+      },
+      {
+        "id": "e38",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 0,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e39",
+        "ok": true,
+        "goldTotal": 1,
+        "goldMatched": 1,
+        "extractedTotal": 1,
+        "extractedSupported": 1
+      },
+      {
+        "id": "e40",
+        "ok": true,
+        "goldTotal": 3,
+        "goldMatched": 3,
+        "extractedTotal": 3,
+        "extractedSupported": 3
+      }
+    ],
+    "byStratum": {
+      "ephemeral": {
+        "rows": 39,
+        "parseFails": 0,
+        "noiseTotal": 39,
+        "noiseAbstained": 1,
+        "abstentionRate": 0.026,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "telemetry": {
+        "rows": 16,
+        "parseFails": 0,
+        "noiseTotal": 16,
+        "noiseAbstained": 0,
+        "abstentionRate": 0,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "referent-stripped": {
+        "rows": 13,
+        "parseFails": 0,
+        "noiseTotal": 13,
+        "noiseAbstained": 1,
+        "abstentionRate": 0.077,
+        "goldTotal": 0,
+        "goldMatched": 0,
+        "recall": null
+      },
+      "durable": {
+        "rows": 12,
+        "parseFails": 0,
+        "noiseTotal": 0,
+        "noiseAbstained": 0,
+        "abstentionRate": null,
+        "goldTotal": 14,
+        "goldMatched": 13,
+        "recall": 0.929
+      },
+      "unknown": {
+        "rows": 52,
+        "parseFails": 0,
+        "noiseTotal": 8,
+        "noiseAbstained": 7,
+        "abstentionRate": 0.875,
+        "goldTotal": 63,
+        "goldMatched": 56,
+        "recall": 0.889
+      }
+    }
+  },
+  "callStats": {
+    "n": 132,
+    "costUsd": {
+      "total": 0,
+      "mean": 0
+    },
+    "tokensIn": {
+      "mean": 0
+    },
+    "tokensOut": {
+      "mean": 0
+    },
+    "latencyMs": {
+      "p50": 0,
+      "p95": 0,
+      "max": 0,
+      "mean": 0
+    },
+    "stopReasons": {
+      "control": 132
+    },
+    "parseFailures": 0
+  },
+  "calls": [
+    {
+      "id": "n01",
+      "extracted": [
+        "the kiosk session has 2 hours and 50 minutes remaining"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n02",
+      "extracted": [
+        "the renderer 4402 was active at 09:12",
+        "the renderer 7718 was spawned at 13:40:06"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n03",
+      "extracted": [
+        "Ticket #58 is an open change request"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n04",
+      "extracted": [
+        "The importer will be made schema-aware"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n05",
+      "extracted": [
+        "Gateway console credentials were renewed",
+        "A new badge became active with premium tier and full permissions"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n06",
+      "extracted": [
+        "the pre-seeded cache is confirmed"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n07",
+      "extracted": [
+        "The kiosk rollout environment is ready.",
+        "The kiosk rollout environment has Ruby 3.4.2 installed.",
+        "Systemd timers are active in the kiosk rollout environment.",
+        "There are no existing unit files in the kiosk rollout environment."
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n08",
+      "extracted": [
+        "the depot-primary host proxy config was verified",
+        "no :7071 tunnel exists",
+        "ports :9090 and :6060 remain intact"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n09",
+      "extracted": [
+        "the dashboard reads quota with HTTP 200 after the depot rotated its access badge"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n10",
+      "extracted": [
+        "Batch 4 was archived"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n11",
+      "extracted": [
+        "Monthly's at 61% after the tweak"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n12",
+      "extracted": [
+        "the session key rotated from digest '…kPzR41Qw' to '…mBhT77wt'"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n13",
+      "extracted": [
+        "Stage 3b is drafted",
+        "Stage 3b is checked",
+        "Stage 3b is passing"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n14",
+      "extracted": [
+        "The ledger trail has 22 entries"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n15",
+      "extracted": [
+        "the depot is at revision d41c9ea",
+        "the revision d41c9ea was from May 8"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n16",
+      "extracted": [
+        "the depot was rolled to f7a20cc"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n17",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n18",
+      "extracted": [
+        "The render is finished"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n19",
+      "extracted": [
+        "vet and bundle CI checks are in flight"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n20",
+      "extracted": [
+        "9 out of 9 probes for Step 6 in orchard-sync passed"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n21",
+      "extracted": [
+        "the day-one validation was plumbing",
+        "the day-one validation reads clean all day"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n22",
+      "extracted": [
+        "All 7 cases covering the full #42 charter §3 agreement passed on the first run of halt.rb v3"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n23",
+      "extracted": [
+        "Item 5 was fully accepted with 18 out of 18"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n24",
+      "extracted": [
+        "the hex slice of rows 130–410 is queued as qw7e2kd90",
+        "no output blob has been produced yet"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n25",
+      "extracted": [
+        "citations resolve",
+        "passwords are excluded from the archive",
+        "4.1 GB of sample media are excluded from the archive",
+        "disposable scratch files are excluded from the archive"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n26",
+      "extracted": [
+        "Orchard Sync stage-3-4-export Item 2 upload is complete",
+        "Polish tweaks are recorded",
+        "Re-sign-off is in progress"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n27",
+      "extracted": [
+        "31/31 probes are passing"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n28",
+      "extracted": [
+        "the roster.yaml is 9 weeks old"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n29",
+      "extracted": [
+        "Client handshake HEAD calls were returning status code 5"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n30",
+      "extracted": [
+        "The polish pass will be scheduled after the charter re-check clears"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n31",
+      "extracted": [
+        "The layout brief is 87 lines long"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n32",
+      "extracted": [
+        "6 cycles have been finished"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n33",
+      "extracted": [
+        "Pagination checks have been repaired"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n34",
+      "extracted": [
+        "OrchardFetcher implementation passed independent charter check",
+        "all 15 probes passed"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n35",
+      "extracted": [
+        "The cache fix was verified live on depot at 08:15:33",
+        "Handshake 204 and 401 replies were header-readable"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n36",
+      "extracted": [
+        "the depot's boot routine has been running for 3 minutes and 10 seconds"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n37",
+      "extracted": [
+        "The file flatten.rb has existing checks that do not require changes when rowKeys are added"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n38",
+      "extracted": [
+        "Sweep 7 had zero issues"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n39",
+      "extracted": [
+        "the registry's plugin checker never contacted the service during the trial"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n40",
+      "extracted": [
+        "the session date is 2025-03-09"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n41",
+      "extracted": [
+        "The feed-poller.spec.rb failed with ERR_GEM_MISSING on 2025-03-10T11:20:15.330Z"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n42",
+      "extracted": [
+        "the cycle is paused",
+        "the helper is waiting on the operator's depot job"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n43",
+      "extracted": [
+        "A workspace named '77-ui-widget-local' was created"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n44",
+      "extracted": [
+        "the watcher was switched to failures-only for the rest of the shift"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n45",
+      "extracted": [
+        "the scribe-bot's recorder ran 29 background drafting sessions",
+        "the operator was out"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n46",
+      "extracted": [
+        "zero visits arrived during the window",
+        "only the probe visit was recorded"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n47",
+      "extracted": [
+        "a patch titled 'MEND-8 Done — guides/feed-spec.md R4 Origin Notes Refreshed' was made"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n48",
+      "extracted": [
+        "the main workspace is being recorded"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n49",
+      "extracted": [
+        "a choice was made to launch the Orchard Sync Charter Check — Pass 2 with a broad-structure lens"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n50",
+      "extracted": [
+        "the active folder during the shift was D:\\Workbench\\orchard-sync"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n51",
+      "extracted": [
+        "the last sweeps included halt trigger with the fresh badge"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n52",
+      "extracted": [
+        "the buffer is at 70%"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n53",
+      "extracted": [
+        "the feature titled 'S2c Mid-Flight Check Gate — NEEDS-WORK: 3 MAJOR + 5 MINORs Found by Helper (503 Path, ruby3 on macOS)' was observed"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n54",
+      "extracted": [
+        "A shift-open.rb script was used",
+        "S2c did not introduce breakage"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n55",
+      "extracted": [
+        "The feature titled 'Mirror Check Upgraded — Shelf-Shift Mid Snare + Clock-Pulse Rhythm Check' was observed.",
+        "The feature involves check_stocker_rerun_mirror.rb.",
+        "check_stocker_rerun_mirror.rb exercises the close-out beat-pulse gate."
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n56",
+      "extracted": [
+        "no reboot was needed for the filter to take hold"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n57",
+      "extracted": [
+        "the transport is proven",
+        "the sensing premise is not proven"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n58",
+      "extracted": [
+        "the new slug_key matches the tuple"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n59",
+      "extracted": [
+        "the handler currently returns quietly"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n60",
+      "extracted": [
+        "This was the third wrong announcement in the same manifest file."
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n61",
+      "extracted": [
+        "the passphrase in that vault would not spill if revealed"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n62",
+      "extracted": [
+        "the patch was recorded",
+        "the patch was shipped"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n63",
+      "extracted": [
+        "Storefront is in"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n64",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n65",
+      "extracted": [
+        "a backward-compatibility smoke check has been added"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n66",
+      "extracted": [
+        "The reissue landed"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n67",
+      "extracted": [
+        "the manifest imported smoothly",
+        "existing playbooks were retained"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n68",
+      "extracted": [
+        "entries 3 and 4 are depot edits"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "n69",
+      "extracted": [
+        "the author initially claimed the cause was feedback-loop echo",
+        "the author corrected this to the full AfterAction event payload capture plus a jammed outbox queue"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 703.5079999999999,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1061.1126,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n70",
+      "extracted": [
+        "the operator's Traillog archive is now a live portal"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1239.7363,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1071.7737,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n71",
+      "extracted": [
+        "Recorder shifts have been running at 3 to 8 times the real-output rate since March 9, 2025"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 667.8013999999998,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 891.9409999999998,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n72",
+      "extracted": [
+        "the banner-notice fix was deployed to production",
+        "a full 6-step handshake probe passed on 2025-03-10 at 09:42:11 UTC"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 836.1817000000001,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 759.0196000000001,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n73",
+      "extracted": [
+        "The orchard-sync visit log was recorded and deployed to the depot on March 10, 2025"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 723.7097999999996,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1027.4484000000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n74",
+      "extracted": [
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was built",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was patched",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was checked",
+        "The Vendor Monthly Quota Reset Watcher with Chat Alerting was rolled out to a shed server",
+        "The shed server uses the 'renew-badge.rb' credential helper"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 750.7801999999992,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 844.7445000000007,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n75",
+      "extracted": [
+        "The Handshake Path Probe was updated to assert that session_reply_origin_flag_enabled is absent"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 643.4012000000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 929.2289000000001,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n76",
+      "extracted": [
+        "A fix for banner-notice removal was pushed to the stage-2-4-bridge branch",
+        "The commit ID for the fix is e81b2ad"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 942.2952999999998,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 834.2311,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n77",
+      "extracted": [
+        "Change #37 has been merged into trunk at commit f7a20cc"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1039.9099000000006,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 918.8172000000004,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n78",
+      "extracted": [
+        "The full rollout of quota-scan.rb on the depot has been completed"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 893.1262999999999,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 848.8622999999989,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n79",
+      "extracted": [
+        "a private archive was created",
+        "the archive was pushed to codehub.example/plumworks/orchard-sync"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 954.8875000000007,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 803.1265999999996,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "n80",
+      "extracted": [
+        "A helper script named 'renew-badge.rb' was created for badge renewal."
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 789.7028999999984,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1116.160899999999,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c01",
+      "extracted": [
+        "The billing service is now on Postgres 16",
+        "The old Mongo cluster is gone"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 640.2563000000009,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 790.3968999999997,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c02",
+      "extracted": [
+        "the organization no longer deploys on Fridays",
+        "the deployment freeze on Fridays is permanent"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 861.536399999999,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 967.9572000000007,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c03",
+      "extracted": [
+        "The vendor contract is signed for renewal on March 3rd",
+        "The countersignature scan has not yet hit the inbox"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 924.7183999999997,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 765.9130000000005,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c04",
+      "extracted": [
+        "the API rate limit is 600 requests per minute"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 642.609199999999,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1026.6319999999996,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c05",
+      "extracted": [
+        "the canary deployment occurred at 14:02",
+        "the full rollout occurred at 14:40",
+        "the retention policy is 90 days",
+        "the previous retention policy was 365 days"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 630.5738000000001,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 762.9705000000013,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c06",
+      "extracted": [
+        "auth tokens are ECDSA"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          false
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1134.0686000000005,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1023.8425999999981,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c07",
+      "extracted": [
+        "the warehouse passed the fire inspection"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 903.5931999999993,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 824.908199999998,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c08",
+      "extracted": [
+        "Priya mentioned that the mobile team owns the push-notification service"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1005.5784999999996,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1107.1903999999995,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c09",
+      "extracted": [
+        "the failover region is Frankfurt"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 785.8161,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 809.3305999999975,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c10",
+      "extracted": [
+        "the contractor said the load-bearing wall is the north wall"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 681.8740999999973,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 931.9930000000022,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c11",
+      "extracted": [
+        "the sensor sweep is normal",
+        "the plant manager confirmed line 4 is certified for food-grade production"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 727.1898000000001,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 856.7786000000015,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c12",
+      "extracted": [
+        "legal signed off",
+        "the data residency requirement is EU-only storage"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 752.3328999999976,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 842.4054999999971,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e01",
+      "extracted": [
+        "the writer switched their primary editor from VS Code to Neovim last week"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1240.5035000000025,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 806.5133999999998,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e02",
+      "extracted": [
+        "the team standup is at 9:30am",
+        "the team standup is capped at 15 minutes"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 945.1386999999995,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 996.1386999999995,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e03",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e04",
+      "extracted": [
+        "the writer has a daughter named Mia",
+        "Mia started kindergarten this fall",
+        "Ms. Patel is Mia's teacher"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 730.0113000000019,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 750.2115000000013,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e05",
+      "extracted": [
+        "the writer used to bike to work",
+        "the writer now takes the train to work",
+        "the writer moved to Oakland"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 931.7682000000023,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1029.8796000000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e06",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e07",
+      "extracted": [
+        "the prod database is Postgres 16",
+        "the prod database is hosted on RDS in us-east-1"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 925.4153000000006,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 806.5247999999992,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e08",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e09",
+      "extracted": [
+        "The writer is allergic to penicillin"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1187.201100000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 777.3352000000014,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e10",
+      "extracted": [
+        "the writer's team picked Stripe for payments",
+        "the team did not pick Adyen for payments",
+        "Stripe was chosen over Adyen because the integration was faster"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 814.2417000000023,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 828.3472000000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e11",
+      "extracted": [
+        "the pricing will be revisited next quarter"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e12",
+      "extracted": [
+        "the manager is Dana",
+        "Raj moved to the platform team"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 778.1916000000019,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 709.8263000000006,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e13",
+      "extracted": [
+        "the writer only buys newer-model car seats since the recall last year"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1649.6106999999975,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 917.1237999999976,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e14",
+      "extracted": [
+        "The organization does not deploy on Fridays"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1017.3107999999993,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 817.7625999999982,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e15",
+      "extracted": [
+        "the writer is no longer the on-call lead for the billing service"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 868.6941000000006,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 876.1008000000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e16",
+      "extracted": [
+        "the SLA is 99.95% uptime",
+        "the error budget is 21 minutes a month"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 925.0536999999968,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 726.3133999999991,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e17",
+      "extracted": [
+        "The lease renews on March 3rd",
+        "Rent goes up to $2,150"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 981.2812000000049,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 800.8701000000001,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e18",
+      "extracted": [
+        "Theo is the writer's son",
+        "Theo turns 8 next week"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 849.2243999999992,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 772.7580000000016,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e19",
+      "extracted": [
+        "the build system was changed from Jenkins to GitHub Actions",
+        "the new build takes about 6 minutes"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 823.8767999999982,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1642.6345999999976,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e20",
+      "extracted": [
+        "the writer's organization was a Python shop",
+        "the organization migrated everything to Go last quarter"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 861.3081999999995,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 791.5318999999945,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e21",
+      "extracted": [
+        "The writer moved from product to engineering in January"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 818.2659000000058,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1169.281299999995,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e22",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e23",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e24",
+      "extracted": [
+        "the writer's email is sam@acme.io"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 834.7603000000017,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1047.1240000000034,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e25",
+      "extracted": [
+        "Dana mentioned the launch slipped to Q3"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 973.584600000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 970.6132999999973,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e26",
+      "extracted": [
+        "the writer's cholesterol is back to normal"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 645.1057999999975,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 983.5081999999966,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e27",
+      "extracted": [
+        "the writer is vegetarian"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1047.4338999999964,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 967.5491000000038,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e28",
+      "extracted": [
+        "The team uses Notion for documents",
+        "The team uses Slack for chat"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 892.9190999999992,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1281.041799999999,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e29",
+      "extracted": [
+        "the writer switched banks to Ally"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 843.7010000000009,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 712.0074000000022,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e30",
+      "extracted": [
+        "The conference is in Berlin this year",
+        "The conference is not in Paris this year"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 973.6150999999954,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 921.2019999999975,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e31",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e32",
+      "extracted": [],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null
+    },
+    {
+      "id": "e33",
+      "extracted": [
+        "the writer runs about 25 miles a week"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 646.1979999999967,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 915.2517999999982,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e34",
+      "extracted": [
+        "standup is every weekday at 10:15"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1120.7796000000017,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 934.3159000000014,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e35",
+      "extracted": [
+        "the new landlord is Mr. Okafor",
+        "the unit is 4B"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 940.0118000000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 804.2147000000041,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e36",
+      "extracted": [
+        "Priya is an engineer on the data team",
+        "Wen is an engineer on the data team"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false,
+          false
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 863.5195999999996,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 819.8958000000057,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e37",
+      "extracted": [
+        "the writer biked to the gym this morning",
+        "the writer signed up for the 6am spin class"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 624.0183000000034,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 841.0450999999957,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e38",
+      "extracted": [
+        "the system runs on GCP"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          false
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 1079.571799999998,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 817.4000000000015,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e39",
+      "extracted": [
+        "The meeting is at 4pm"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true
+        ],
+        "extractedSupported": [
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 779.9049999999988,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 1182.8868000000002,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e40",
+      "extracted": [
+        "the Series A funding was closed at $12 million",
+        "Marcus joins as CFO on Monday",
+        "a Denver office is opening"
+      ],
+      "stopReason": "control",
+      "parseOk": null,
+      "tokensIn": 0,
+      "tokensOut": 0,
+      "costUsd": 0,
+      "latencyMs": 0,
+      "requestParams": null,
+      "servedModel": null,
+      "reasoningTokens": null,
+      "judge": {
+        "ok": true,
+        "goldMatched": [
+          true,
+          true,
+          true
+        ],
+        "extractedSupported": [
+          true,
+          true,
+          true
+        ],
+        "calls": [
+          {
+            "question": "recall",
+            "ok": true,
+            "ms": 732.2852999999959,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          },
+          {
+            "question": "precision",
+            "ok": true,
+            "ms": 913.0567999999985,
+            "requestParams": {
+              "model": "gpt-5.6-luna",
+              "reasoning_effort": "none",
+              "max_completion_tokens": 768
+            },
+            "servedModel": "gpt-5.6-luna",
+            "systemFingerprint": null,
+            "reasoningTokens": 0,
+            "stopReason": "stop"
+          }
+        ]
+      }
+    }
+  ]
+}

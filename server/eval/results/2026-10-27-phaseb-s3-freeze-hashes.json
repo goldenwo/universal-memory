@@ -1,0 +1,293 @@
+{
+  "schema": 1,
+  "prereg": "docs/plans/2026-10-25-model-migration-phase-b/addendum-3.md",
+  "frozenAt": "2026-10-27",
+  "parent": {
+    "codeSha": "90250695b72efeb250e551b69c7eaf1acc800b8a",
+    "amendment": "score.mjs A1 (registers L6e)",
+    "mainWindowHead": "7d043a8126e94c4304c46485da96fbcb4717ce68"
+  },
+  "note": "Hashes only (the plan directory is gitignored). Its commit is the frozen HEAD for runs-s3.sh and score-s3.mjs --expect-head.",
+  "entries": [
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/addendum-3.md",
+      "sha256": "c1039892ffd8535e19b915384e7869da3f61fd606f4a366d742a1e04459075b7"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/score-s3.mjs",
+      "sha256": "034231625bb843c5544f9f4ce36fa4fd31404239a2d1ba961a8ad0d38ee2c6e8"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/score-s3-selftest.mjs",
+      "sha256": "ab4e07e02babb421efd01b4d54989a925e4c6b74cf14c28b8522bbc63501ef77"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/runs-s3.sh",
+      "sha256": "83ea5139f790566f581c75348c84b5592ef7e6e93e84d630d459d947196b6fdc"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/tools/freeze-s3.mjs",
+      "sha256": "8db063394d56504434e4df2bf58066067cf96e77ce68c760a00d80fe495e29c3"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/score.mjs",
+      "sha256": "660f30111ab4d5117f181854a9f7bf75eb0e58f543cbc93db179530dc49d1872"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun-selftest-output.txt",
+      "sha256": "750ac19668608c45d015b7abc237646b0679667b47ef2b1f636f831c0922ac9c"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-B-1.log",
+      "sha256": "658ab0a32effc208211d34b86a1b5e7fe84dbdf297b97546946d2d27601c5c73"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-B-2.log",
+      "sha256": "c6c520e0bb3d4b937b1321869278e565722e42f570cc3e5786e0100ba58d9ce0"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-B-3.log",
+      "sha256": "dc1b7bffb32925c5770ac7c64e5f26318e2b41147bf90f1067dd454405f67692"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-B-4.log",
+      "sha256": "e104abc0d680fb176eb6c036caafb27e5461b87b00ba9929228ce62767c5b9c8"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-B-5.log",
+      "sha256": "ac268e568c07096bc4ba7b6224052860b6970fe6141864144d15d17ac4cc4357"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-L6e-1.log",
+      "sha256": "8f1a6336153080710ce6e8464aec061d33e4eec68b075d2fda22cf8cc1554c05"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-L6e-2.log",
+      "sha256": "d94ef2ddd5b60158dba8749a8f9fa26e55ac88c910e80df6052825c731e161af"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-L6e-3.log",
+      "sha256": "5d91c9b1e3fdd11c24ddd66985769a338bd0df1a757c8a299a51f9044f812ae8"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-L6e-4.log",
+      "sha256": "c973ac5334f95241f9eca7c761f96335c902cba720ad55daada2238beaf4c8e4"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-state-L6e-5.log",
+      "sha256": "e063d5e3bd1679d27b9886d836eb2fd5680971dca9971046817c0c9e25d0acea"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-B-1.log",
+      "sha256": "2cde022973e6996646c0fefb8f31704c7f93d28392c0f454fef7705125772df2"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-B-2.log",
+      "sha256": "90343798caaccd042f49a7a338ccaf3af8c2c3b5c55528208d73b1747289fdf4"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-B-3.log",
+      "sha256": "9f4ed04b5962b20a31ab943698311180deaba1f2ff0f51667610a38f6f308af8"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-B-4.log",
+      "sha256": "e5ed7d11825459de5767868d4115a8546634e0869f6e8e0ca42437dcf528b1a0"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-B-5.log",
+      "sha256": "0ff15e8328c6550807cc0afbf81822e355610a8b442fdd14486ffbc059420285"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-L6e-1.log",
+      "sha256": "1e696e4656489100cf3d52b5f02b339e365aac829ae7c7a6dd7227d2d62f320b"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-L6e-2.log",
+      "sha256": "84c6ee3115d5a9d1cc8daae8ed0694b11494d5d2590e4a9b47b89f9fdf91a2e6"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-L6e-3.log",
+      "sha256": "b3006c8d12a0fbfea9edba7d59fafc69e8bd93787f6f1e88c6ed324d15d66b1e"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-L6e-4.log",
+      "sha256": "5f53bb371b0a4d7e864efa9a8a07a66060b68ee015e47ff9475a8a3b789831d6"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/s-sum-L6e-5.log",
+      "sha256": "4273598c35f2c3721a29a16d8b175e1b946f1ae4680c3f5a1ed0597ba9274f7f"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/ss4-B-1.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/ss4-B-2.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/ss4-B-3.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/ss4-L6e-1.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/ss4-L6e-2.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/logs/ss4-L6e-3.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/runs.log",
+      "sha256": "1b12730563867916e6d6b0dd8361ccea65949f9ee73f88057a2f732795aa1139"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run1-p1.json",
+      "sha256": "d8dc8aab61c375bc920dd65a2e8e538f5a7425e2e2964d0846cac6cccd1fa285"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run1-p2.json",
+      "sha256": "84ffe21c5c9743506b7242dc5da86eaeec1a663929944ca3ff4f6adc6b90da29"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run2-p1.json",
+      "sha256": "85cf1279327694e946315fdc2868f55453f7073cc63f0269c65f8ecde983c449"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run2-p2.json",
+      "sha256": "14caa128e909f2eaa81c5517b408f08dfd3c2ae1c0d451c540cd9d71844a384b"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run3-p1.json",
+      "sha256": "b7456f90eeb993a1289512ee2870466959b4daef4ae16aa00362991babef6c11"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run3-p2.json",
+      "sha256": "b9f48e29736fb44cd150b14a2dc142907ea14ff2ad3ee34e505dc5cce728ecf8"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run4-p1.json",
+      "sha256": "3325089b22a98fcff66cb9849f61a16173e095725fc4644795b6c713dcad9f9e"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run4-p2.json",
+      "sha256": "a0adfc064c9aae03814de1a84e4cd96b169e65d5158c4029f1f377cc18ba787d"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run5-p1.json",
+      "sha256": "02179e49a8c61a6432c0698f384a6ae3158fb57ab80196a5200518550ff92b54"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-B-run5-p2.json",
+      "sha256": "d5c8f30c5fa789f6888df0be7d5e56ee31d08b74f32a925b17fdd10fb49d336f"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run1-p1.json",
+      "sha256": "f83e9739bd6523a9110821d653eae4425cd2057c236ab02272da2070195f8633"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run1-p2.json",
+      "sha256": "49018fdcf968887520929e097e23735f7f09e67d1ad842f4eb9df35a99c08b1e"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run2-p1.json",
+      "sha256": "08c181786f222f3e0d0861f974aa4e5b4d7a2cfae7abc09fcb0d18f36650de94"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run2-p2.json",
+      "sha256": "e87d6f74399557814c4b442d4b92b0b5ed466c57c1cb7c819af63447ae4751c3"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run3-p1.json",
+      "sha256": "eb3adc4e08233b6d819cb0935ffdbc037f501f1c379acf3ac91514873b77ef73"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run3-p2.json",
+      "sha256": "d044bc897a4c0e655ca7ed4e8e9dbe4d93ebafd4ff9c7a6df820f63a70babf60"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run4-p1.json",
+      "sha256": "f68f68cbc0a77c9923a40b34576458ca9011c887e0534aaa6309b7bbdc7d3c10"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run4-p2.json",
+      "sha256": "5dbe0b7b3ac40ef543b147e5e81069c9b81edaca3ca86b1c76a5753552b1b883"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run5-p1.json",
+      "sha256": "3cf270623c5bff3e934d9843c7e6097ab4667de204da10c22e2ebed6a49b8342"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-state-L6e-run5-p2.json",
+      "sha256": "d73b4204ea4cef05d2afaf053dbf3ad09e6e41447fdf25b6d7a54de466d6f9ea"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-B-run1.json",
+      "sha256": "db36d0f5a82aa41533ded30fd20d428660075ce29b09737c20b32a6d2351e765"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-B-run2.json",
+      "sha256": "e2c2ce8a757cddf99162a1faa6f6360e37766a191add7abe779d2c569e030f2f"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-B-run3.json",
+      "sha256": "ae0cbf97088417054d5e042adb2f1e2ec653ae931dcd8f6cbdab851a9a055633"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-B-run4.json",
+      "sha256": "08f301f3e8ce6631cb39824041f5959f9b2677862623ecc157c00a2587351fc3"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-B-run5.json",
+      "sha256": "8f30142ecabdd24f05343256047e174f73ab49c061d496efb9e1389ea1b2aab1"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-L6e-run1.json",
+      "sha256": "6c8eedf368652df7034e7004b0205c5812c81bc6830d0c98ced05b0a93628107"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-L6e-run2.json",
+      "sha256": "03e4aac8c879b6a53ae3387308803b63db26a38590f23ffb56d18478ff32df0a"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-L6e-run3.json",
+      "sha256": "0567b73876425e574e557a876ed00a35df44795605a5e544c87921222ab7f41d"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-L6e-run4.json",
+      "sha256": "b7c2ec47351f5c811e030e09fbce6260e81943f5929ea3cd51705f4e1dcfe2a9"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/s-sum-L6e-run5.json",
+      "sha256": "8c34721ea3b82016254283b6a5caaec66e5afb567981e9595f797f4e97b6bf7f"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/ss4-B-1.tap",
+      "sha256": "a692d9cd0ee780f8ffa017760fe2629536dc6a4c43878f01e76d00b71c242000"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/ss4-B-2.tap",
+      "sha256": "0b5d29036a784977f83c132226174d09e4bf77b16defacf6cdb254dfbb5c7852"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/ss4-B-3.tap",
+      "sha256": "c88c9d057abe2a9b479382f3cc359bcac2b57347cc1643aa14a9e452b5e8b1c4"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/ss4-L6e-1.tap",
+      "sha256": "093244e4f0121a5dcd68dc24953c090f0653617225320d3c4b1447661d57adf7"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/ss4-L6e-2.tap",
+      "sha256": "7c207da50fd59c8a7917f95f35ef5a4a7896a15bd43c9e5a578bf7ab6242410e"
+    },
+    {
+      "key": "docs/plans/2026-10-25-model-migration-phase-b/results/s3-dryrun/ss4-L6e-3.tap",
+      "sha256": "f92b52a08aee684875c581ca73b0da779ba611dc80f993dc68cdff4cfbb34b79"
+    }
+  ]
+}

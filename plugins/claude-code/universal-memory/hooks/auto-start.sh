@@ -13,7 +13,7 @@
 #     localhost/127.0.0.1/[::1]): never auto-start a local server — log a
 #     one-line diagnostic and exit 0. Remote servers start on their host.
 #   - If unreachable AND UM_COMPOSE_DIR is set + valid:
-#       single-flight guard (lock dir + already-listening re-probe, spec §5 —
+#       single-flight guard (O_EXCL lock file + already-listening re-probe, spec §5 —
 #       under API-always this hook fires on more sessions, and two
 #       near-simultaneous session-starts must spawn at most one server),
 #       then `docker compose up -d` there, poll /health (up to 60s).
@@ -94,16 +94,24 @@ if [ ! -f "$UM_COMPOSE_DIR/docker-compose.yml" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Single-flight guard (spec §5): atomic mkdir lock so two near-simultaneous
+# Single-flight guard (spec §5): an atomic lock so two near-simultaneous
 # session-starts spawn at most one server. A lock older than 5 minutes is
 # stale (a healthy start completes well within the 60s poll) and is stolen.
+#
+# The lock is a file created by bash's own noclobber redirect, which opens with
+# O_CREAT|O_EXCL, so exactly one racer creates it. It used to be a mkdir lock
+# directory, but `mkdir` is not atomic everywhere: Ubuntu 26.04's uutils mkdir
+# returns 0 when a racing mkdir made the directory first (both calls succeeded
+# in 85 of 300 measured races). A leftover auto-start.lock directory from an
+# older version is ignored.
 # ---------------------------------------------------------------------------
-LOCK_DIR="$HOME/.um/state/auto-start.lock"
+LOCK_FILE="$HOME/.um/state/auto-start.lockfile"
 mkdir -p "$HOME/.um/state" 2>/dev/null || true
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-    if [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
-        rmdir "$LOCK_DIR" 2>/dev/null || true
-        if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+take_lock() { ( set -C; : > "$LOCK_FILE" ) 2>/dev/null; }
+if ! take_lock; then
+    if [ -n "$(find "$LOCK_FILE" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
+        rm -f "$LOCK_FILE" 2>/dev/null || true
+        if ! take_lock; then
             log "another auto-start is already starting the server; skipping"
             exit 0
         fi
@@ -112,7 +120,7 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
         exit 0
     fi
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+trap 'rm -f "$LOCK_FILE" 2>/dev/null || true' EXIT
 
 # Already-listening re-probe: the flight we raced with may have just
 # finished bringing the server up.

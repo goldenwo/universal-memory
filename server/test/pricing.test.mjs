@@ -100,10 +100,13 @@ test('the luna models and gpt-4.1-mini carry OpenAI\'s published rates (read 202
   assert.equal(PRICING.openai.last_verified, '2026-10-23');
 });
 
-test('the Gemini replacements carry Google\'s published rates and the embedding model its default dimension', () => {
-  assert.deepEqual(PRICING.google.models['gemini-3.6-flash'], { in: 0.00075, out: 0.00375, type: 'chat' });
+// gemini-3.6-flash at its 2027-01-01 rates (model migration Phase B, spec R7): the page
+// (re-read 2026-10-27) doubles them that day, to $1.50 / $7.50 per 1M. Pricing the later rate
+// now is the conservative side: before 01-01 the cost cap binds early, never late.
+test('the Gemini replacements carry Google\'s published rates (gemini-3.6-flash at its 2027-01-01 rates) and the embedding model its default dimension', () => {
+  assert.deepEqual(PRICING.google.models['gemini-3.6-flash'], { in: 0.00150, out: 0.00750, type: 'chat' });
   assert.deepEqual(PRICING.google.models['gemini-embedding-2'], { in: 0.00020, out: 0, type: 'embed', dim: 3072 });
-  assert.equal(PRICING.google.last_verified, '2026-10-23');
+  assert.equal(PRICING.google.last_verified, '2026-10-27');
 });
 
 test('retired model ids stay priced, so a .env that still pins one keeps booting', () => {

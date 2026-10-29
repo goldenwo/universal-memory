@@ -55,6 +55,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fHalfFrom, f1From } from './fbeta.mjs';
 import { summarize } from './lib/stats.mjs';
+import { timed, callRecord } from './lib/call-record.mjs';
 
 const PRECISION_FLOOR = 0.98;               // chosen-τ rule (DP: false-merge is destructive)
 
@@ -322,12 +323,13 @@ function md5Hex(s) {
 }
 
 export function parseArgs(argv) {
-  const args = { doEmbed: true };
+  const args = { doEmbed: true, runs: 1 };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--fixture') args.fixture = argv[++i];
     else if (a === '--out-prefix') args.outPrefix = argv[++i];
     else if (a === '--out') args.out = argv[++i];
+    else if (a === '--runs') args.runs = Math.max(1, Number.parseInt(argv[++i], 10) || 1);
     else if (a === '--no-embed') args.doEmbed = false;
     else if (a === '--thresholds-min') args.thresholdsMin = parseFloat(argv[++i]);
     else if (a === '--thresholds-max') args.thresholdsMax = parseFloat(argv[++i]);
@@ -349,9 +351,10 @@ function buildThresholds(min, max, step) {
   return out;
 }
 
-/** Resolve the contradiction provider name from env (judge resolution order). */
-function resolveProvider() {
-  return process.env.UM_CONTRADICTION_PROVIDER ?? process.env.UM_SUMMARIZER_PROVIDER ?? 'openai';
+/** Resolve the contradiction provider name from env (the judge's own resolution, blank = unset). */
+async function resolveProvider() {
+  const { judgeProviderName } = await import('../lib/contradiction-judge.mjs');
+  return judgeProviderName();
 }
 
 /** Map a provider to its API-key env var(s). ollama needs none. */
@@ -366,52 +369,33 @@ function providerKeyVars(provider) {
 }
 
 /**
- * Run the judge (and optionally the embedder) over every pair ONCE, then sweep
- * thresholds + pick τ + analyze retrieval. Returns the canonical result JSON.
- * Live deps are lazy-imported here.
+ * One run of the judge over every pair, serially (J-d3's latency rule reads serial calls), and
+ * optionally the embedder. The CLI passes the real judge; the offline replay control passes a
+ * stub answering June's recorded verdicts, so both exercise this one code path (spec R2).
+ * Each row keeps the fixture fields, the verdict and its raw confidence, and the call record:
+ * ok, failCause, the R1 fields and latency (prereg "Roles, inputs and records").
  *
- * @param {{pairs: Array, fixturePath: string, doEmbed: boolean, thresholds?: number[]}} args
+ * @param {object} args
+ * @param {Array} args.pairs
+ * @param {(older: string, newer: string) => Promise<object>} args.judge - judgeContradiction-shaped
+ * @param {(text: string) => Promise<number[]>} [args.embed] - text → vector; omitted = no cosine
+ * @returns {Promise<{judged: Array, cost: {tokensIn: number, tokensOut: number}}>}
  */
-async function runOnce({ pairs, fixturePath, doEmbed, thresholds }) {
-  const { judgeContradiction } = await import('../lib/contradiction-judge.mjs');
-
-  let embed = null;
-  let cosine = null;
-  let NOOP_METRICS = null;
-  if (doEmbed) {
-    ({ embed } = await import('../lib/embed.mjs'));
-    ({ NOOP_METRICS } = await import('../lib/metrics.mjs'));
-    ({ cosine } = await import('./dedup-threshold-sweep.mjs'));
-  }
-
+export async function runD3({ pairs, judge, embed = null }) {
   const cost = { tokensIn: 0, tokensOut: 0 };
-
-  // Cache embed vectors per unique text to avoid duplicate embed calls.
   const vecCache = new Map();
-  async function embedOnce(text) {
-    if (vecCache.has(text)) return vecCache.get(text);
-    const r = await embed(text, { metrics: NOOP_METRICS });
-    vecCache.set(text, r.vector);
-    cost.tokensIn += r.tokensIn ?? 0;
-    cost.tokensOut += r.tokensOut ?? 0;
-    return r.vector;
-  }
+  const vectorOf = async (text) => {
+    if (!vecCache.has(text)) vecCache.set(text, await embed(text));
+    return vecCache.get(text);
+  };
+  const { cosineStrict } = embed ? await import('../lib/vector.mjs') : {};
 
   const judged = [];
   for (const pair of pairs) {
-    const verdict = await judgeContradiction(pair.olderFact, pair.newerFact);
+    const verdict = await timed(() => judge(pair.olderFact, pair.newerFact));
     cost.tokensIn += verdict.usage?.tokensIn ?? 0;
     cost.tokensOut += verdict.usage?.tokensOut ?? 0;
-
-    const comparable = isComparable(pair);
-
-    let cos = null;
-    if (doEmbed) {
-      const vA = await embedOnce(pair.olderFact);
-      const vB = await embedOnce(pair.newerFact);
-      cos = cosine(vA, vB);
-    }
-
+    const cos = embed ? cosineStrict(await vectorOf(pair.olderFact), await vectorOf(pair.newerFact)) : null;
     judged.push({
       olderFact: pair.olderFact,
       newerFact: pair.newerFact,
@@ -421,27 +405,61 @@ async function runOnce({ pairs, fixturePath, doEmbed, thresholds }) {
       newerPersona: pair.newerPersona ?? null,
       label: pair.label,
       category: pair.category,
-      comparable,
+      comparable: isComparable(pair),
       contradicts: verdict.contradicts,
       confidence: verdict.confidence,
       reasoning: verdict.reasoning,
       cosine: cos,
+      ...callRecord(verdict),
     });
   }
+  return { judged, cost };
+}
 
-  const sweep = sweepThresholds({ judged, thresholds });
-  const chosen = pickThreshold(sweep, { precisionFloor: PRECISION_FLOOR });
-  const retrieval = doEmbed ? analyzeRetrieval(judged) : null;
-
-  return await buildResultJson({ pairs, fixturePath, thresholds, sweep, chosen, retrieval, judged, cost });
+/** Where the CLI writes: --out alone (no d3-latest.json), else the legacy prefix + latest pointer. */
+export function outputPaths(args) {
+  if (args.out) return { primaryPath: args.out, latestPath: null };
+  const resultsDir = args.outPrefix ? dirname(args.outPrefix) : 'eval/results';
+  // D3-specific 'latest' pointer: must NOT be 'latest.json' — that path is
+  // owned by the D1 dedup sweep harness in the same results dir (collision).
+  return {
+    primaryPath: `${args.outPrefix ?? join(resultsDir, 'd3-eval')}-run1.json`,
+    latestPath: join(resultsDir, 'd3-latest.json'),
+  };
 }
 
 /**
- * Assemble the canonical result JSON (mirrors D1's buildResultJson shape).
+ * `runs` runs of runD3 with the live judge (and embedder), each swept and τ-picked, as one
+ * result JSON. Live deps are lazy-imported here.
  */
-async function buildResultJson({ pairs, fixturePath, thresholds, sweep, chosen, retrieval, judged, cost }) {
-  const provider = resolveProvider();
-  const model = process.env.UM_CONTRADICTION_MODEL ?? '(provider default)';
+async function runLive({ pairs, fixturePath, doEmbed, thresholds, runs }) {
+  const { judgeContradiction } = await import('../lib/contradiction-judge.mjs');
+  let embed = null;
+  if (doEmbed) {
+    const { embed: embedText } = await import('../lib/embed.mjs');
+    const { NOOP_METRICS } = await import('../lib/metrics.mjs');
+    embed = async (text) => (await embedText(text, { metrics: NOOP_METRICS })).vector;
+  }
+  const out = [];
+  const cost = { tokensIn: 0, tokensOut: 0 };
+  for (let r = 0; r < runs; r++) {
+    const { judged, cost: c } = await runD3({ pairs, judge: judgeContradiction, embed });
+    cost.tokensIn += c.tokensIn; cost.tokensOut += c.tokensOut;
+    const sweep = sweepThresholds({ judged, thresholds });
+    out.push({ run: r + 1, sweep, chosen: pickThreshold(sweep, { precisionFloor: PRECISION_FLOOR }), retrieval: doEmbed ? analyzeRetrieval(judged) : null, judged });
+  }
+  return await buildResultJson({ pairs, fixturePath, thresholds, runs: out, cost });
+}
+
+/**
+ * Assemble the canonical result JSON (mirrors D1's buildResultJson shape), one entry per run.
+ */
+async function buildResultJson({ pairs, fixturePath, thresholds, runs, cost }) {
+  const provider = await resolveProvider();
+  // The model the judge resolves to (contradiction-judge.mjs judgeModelName: env, else that
+  // provider's default; blank = unset).
+  const { judgeModelName } = await import('../lib/contradiction-judge.mjs');
+  const model = judgeModelName();
 
   const byCategory = {};
   const byLabel = { contradiction: 0, not: 0 };
@@ -466,10 +484,7 @@ async function buildResultJson({ pairs, fixturePath, thresholds, sweep, chosen, 
     env: { node: process.version, platform: process.platform },
     thresholds,
     precisionFloor: PRECISION_FLOOR,
-    sweep,
-    chosen,
-    retrieval,
-    judged,
+    runs,
     cost,
   };
 }
@@ -482,7 +497,7 @@ async function writeJson(path, obj) {
 async function cliMain() {
   const args = parseArgs(process.argv);
   if (!args.fixture) {
-    console.error('Usage: d3-eval.mjs --fixture <path> [--out-prefix <path> | --out <path>] [--no-embed] [--thresholds-min N --thresholds-max N --thresholds-step N]');
+    console.error('Usage: d3-eval.mjs --fixture <path> [--out-prefix <path> | --out <path>] [--runs N] [--no-embed] [--thresholds-min N --thresholds-max N --thresholds-step N]');
     process.exit(2);
   }
   if (!existsSync(args.fixture)) {
@@ -499,7 +514,7 @@ async function cliMain() {
   // Preflight provider-key check. Try process.loadEnvFile() (Node ≥20.12 loads
   // ./.env) before giving up — the project keeps keys in server/.env with no
   // dotenv dependency.
-  const provider = resolveProvider();
+  const provider = await resolveProvider();
   const keyVars = providerKeyVars(provider);
   if (keyVars.length > 0) {
     const hasKey = () => keyVars.some((v) => process.env[v]);
@@ -519,29 +534,25 @@ async function cliMain() {
     ? buildThresholds(args.thresholdsMin, args.thresholdsMax, args.thresholdsStep)
     : defaultThresholds();
 
-  console.log(`[d3-eval] Judging ${pairs.length} pairs over ${thresholds.length} thresholds (embed=${args.doEmbed}, provider=${provider})...`);
-  const result = await runOnce({ pairs, fixturePath: args.fixture, doEmbed: args.doEmbed, thresholds });
+  console.log(`[d3-eval] Judging ${pairs.length} pairs over ${thresholds.length} thresholds × ${args.runs} run(s) (embed=${args.doEmbed}, provider=${provider})...`);
+  const result = await runLive({ pairs, fixturePath: args.fixture, doEmbed: args.doEmbed, thresholds, runs: args.runs });
 
-  const resultsDir = args.outPrefix
-    ? dirname(args.outPrefix)
-    : args.out
-      ? dirname(args.out)
-      : 'eval/results';
-  const primaryPath = args.out ?? `${args.outPrefix ?? join(resultsDir, 'd3-eval')}-run1.json`;
-  // D3-specific 'latest' pointer: must NOT be 'latest.json' — that path is
-  // owned by the D1 dedup sweep harness in the same results dir (collision).
-  const latestPath = join(resultsDir, 'd3-latest.json');
-
+  // --out never also overwrites d3-latest.json: the June records it would clobber are what the
+  // Phase B runs are compared against (spec R2).
+  const { primaryPath, latestPath } = outputPaths(args);
   await writeJson(primaryPath, result);
-  await writeJson(latestPath, result);
-  console.log(`[d3-eval] Result written to ${primaryPath} and ${latestPath}`);
-  console.log('');
-  console.log(formatSummaryTable(result));
-  console.log('');
-  if (result.chosen.meetsFloor) {
-    console.log(`[d3-eval] Recommended τ = ${result.chosen.tau} (precision=${fmtPct(result.chosen.precision)}, recall=${fmtPct(result.chosen.recall)}, floor=${result.precisionFloor})`);
-  } else {
-    console.log(`[d3-eval] Recommended τ = NONE — no threshold reaches precision floor ${result.precisionFloor} (best=${fmtPct(result.chosen.bestPrecision)} at τ=${fmtNum(result.chosen.bestPrecisionTau)}). Widen the fixture or revisit the judge.`);
+  if (latestPath) await writeJson(latestPath, result);
+  console.log(`[d3-eval] Result written to ${primaryPath}${latestPath ? ` and ${latestPath}` : ''}`);
+  for (const run of result.runs) {
+    console.log('');
+    console.log(`--- run ${run.run} ---`);
+    console.log(formatSummaryTable({ ...result, ...run }));
+    console.log('');
+    if (run.chosen.meetsFloor) {
+      console.log(`[d3-eval] Recommended τ = ${run.chosen.tau} (precision=${fmtPct(run.chosen.precision)}, recall=${fmtPct(run.chosen.recall)}, floor=${result.precisionFloor})`);
+    } else {
+      console.log(`[d3-eval] Recommended τ = NONE — no threshold reaches precision floor ${result.precisionFloor} (best=${fmtPct(run.chosen.bestPrecision)} at τ=${fmtNum(run.chosen.bestPrecisionTau)}). Widen the fixture or revisit the judge.`);
+    }
   }
 }
 

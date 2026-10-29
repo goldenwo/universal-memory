@@ -54,7 +54,7 @@ import { embed as realEmbed } from './embed.mjs';
 import { findEmbeddingSimilarCandidates } from './dedup.mjs';
 import { judgeContradiction } from './contradiction-judge.mjs';
 import { computeFactId } from './add.mjs';
-import { resolveSupersessionDirection } from './supersede.mjs';
+import { resolveSupersessionDirection, defaultJudgeThreshold } from './supersede.mjs';
 import { isUsableDate } from './ranking.mjs';
 
 /**
@@ -65,7 +65,7 @@ import { isUsableDate } from './ranking.mjs';
  * @param {string}   opts.userId     — Required. Partition key.
  * @param {string}   [opts.lane]     — Lane slug. If absent AND persona absent → no-op.
  * @param {string}   [opts.persona]  — Persona slug. Same gate as lane.
- * @param {number}   [opts.judgeThreshold=0.80]     — Minimum LLM-judge confidence to supersede an older fact. Eval-derived (D3.3 Task 3.2).
+ * @param {number}   [opts.judgeThreshold]          — Minimum LLM-judge confidence to supersede an older fact. Default: the judge provider's measured τ (supersede.mjs defaultJudgeThreshold — 0.85 on openai, model migration Phase B; 0.80 elsewhere).
  * @param {number}   [opts.retrievalThreshold=0.45] — Minimum embedding cosine for a candidate to be RETRIEVED (passed to _find as its score_threshold). Eval-derived; kept far below judgeThreshold because true contradictions are only moderately cosine-similar.
  * @param {string}   [opts.collection]    — Qdrant collection name.
  * @param {object}   [opts.client]        — Qdrant client (for real _find).
@@ -88,15 +88,13 @@ export async function detectContradictionsInBatch(transcript, {
   lane,
   persona,
   // D3.3 Task 3.2: the retrieval cosine cutoff and the judge-confidence cutoff
-  // are INDEPENDENT and must not share a value.
-  // eval-derived 2026-06-02 (server/eval/results/d3-latest.json): precision is 1.0
-  // at EVERY swept τ (the judge emits zero false positives on the fixture), so the
-  // harness precision-floor rule mechanically recommends τ=0.70 (range floor).
-  // Pinned to 0.80 deliberately: top of the recall=1.0 plateau common to BOTH runs
-  // (P/R still 1.0/1.0), with headroom above the negatives and rejecting sub-0.80
-  // hedged verdicts — the precision-first choice. true-contradiction cosines span
+  // are INDEPENDENT and must not share a value. true-contradiction cosines span
   // 0.50-0.87 (all below the judge τ), which is why retrieval must decouple lower.
-  judgeThreshold = 0.80,     // judge-confidence gate (supersede iff confidence >= this)
+  // The judge τ is the judge provider's own, resolved per call (defaultJudgeThreshold):
+  // 0.85 on openai, τ* re-measured on gpt-6-luna at effort none (model migration Phase B
+  // window 2, committed 0c4ca22) because luna takes no temperature 0; 0.80 on a provider
+  // with no τ* of its own (pinned 2026-06-02 on gpt-4o-mini, d3-latest.json).
+  judgeThreshold = defaultJudgeThreshold(), // judge-confidence gate (supersede iff confidence >= this)
   retrievalThreshold = 0.45, // candidate-retrieval cosine (passed to _find as score_threshold)
   collection,
   client,

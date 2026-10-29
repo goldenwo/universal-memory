@@ -1,0 +1,238 @@
+{
+  "scorer": "docs/plans/2026-10-25-model-migration-phase-b/score-h55.mjs",
+  "log": {
+    "servedH45": [
+      "claude-haiku-4-5-20251001"
+    ],
+    "servedH55": [
+      "claude-haiku-5-5"
+    ],
+    "heads": [
+      "99d84035601b22afa2f307538a280633fbd2f21e"
+    ],
+    "unregistered": [],
+    "outOfOrder": []
+  },
+  "runs": {
+    "s-state-H45-1": {
+      "state": "ok"
+    },
+    "s-state-H45-2": {
+      "state": "ok"
+    },
+    "s-state-H45-3": {
+      "state": "ok"
+    },
+    "s-state-H45-4": {
+      "state": "ok"
+    },
+    "s-state-H45-5": {
+      "state": "ok"
+    },
+    "s-state-H55-1": {
+      "state": "ok"
+    },
+    "s-state-H55-2": {
+      "state": "ok"
+    },
+    "s-state-H55-3": {
+      "state": "ok"
+    },
+    "s-state-H55-4": {
+      "state": "ok"
+    },
+    "s-state-H55-5": {
+      "state": "ok"
+    },
+    "s-sum-H45-1": {
+      "state": "ok"
+    },
+    "s-sum-H45-2": {
+      "state": "ok"
+    },
+    "s-sum-H45-3": {
+      "state": "ok"
+    },
+    "s-sum-H45-4": {
+      "state": "ok"
+    },
+    "s-sum-H45-5": {
+      "state": "ok"
+    },
+    "s-sum-H55-1": {
+      "state": "ok"
+    },
+    "s-sum-H55-2": {
+      "state": "ok"
+    },
+    "s-sum-H55-3": {
+      "state": "ok"
+    },
+    "s-sum-H55-4": {
+      "state": "ok"
+    },
+    "s-sum-H55-5": {
+      "state": "ok"
+    },
+    "ss4-H45-1": {
+      "state": "ok"
+    },
+    "ss4-H45-2": {
+      "state": "ok"
+    },
+    "ss4-H45-3": {
+      "state": "ok"
+    },
+    "ss4-H55-1": {
+      "state": "ok"
+    },
+    "ss4-H55-2": {
+      "state": "ok"
+    },
+    "ss4-H55-3": {
+      "state": "ok"
+    }
+  },
+  "arms": {
+    "H45": {
+      "void": null,
+      "exceptions": 0
+    },
+    "H55": {
+      "void": null,
+      "exceptions": 0
+    }
+  },
+  "judge": {
+    "eligible": false,
+    "failed": [
+      "no τ holds JR1 and JR2"
+    ],
+    "tauStar": null
+  },
+  "summarizer": {
+    "sState": {
+      "inventedDatesZero": {
+        "mean": 9.6,
+        "bMean": 10.8,
+        "ok": false
+      },
+      "futureZero": {
+        "mean": 13,
+        "bMean": 13,
+        "ok": true
+      },
+      "inFlightStamped": {
+        "mean": 13,
+        "bMean": 12,
+        "ok": true
+      },
+      "orderClean": {
+        "mean": 13,
+        "bMean": 12.4,
+        "ok": true
+      },
+      "retention": {
+        "mean": 9.8,
+        "bMean": 7,
+        "ok": true
+      },
+      "pass2": {
+        "mean": 10,
+        "bMean": 8.4,
+        "ok": true
+      }
+    },
+    "sSum": {
+      "SS1": {
+        "value": 0.794937,
+        "bound": 0.438608,
+        "ok": true
+      },
+      "SS2": {
+        "value": 0.033333,
+        "bound": 0.3,
+        "ok": true
+      },
+      "SS3": {
+        "value": 12,
+        "bound": 11,
+        "ok": true
+      },
+      "SS5": {
+        "value": 3297.916667,
+        "bound": 2574.700001,
+        "ok": false
+      },
+      "reported": {
+        "arm": {
+          "latency": {
+            "max": 22528.8949,
+            "p95": 20158.1617,
+            "timeoutMs": 100000
+          },
+          "costPerSummary": 0.002227
+        },
+        "B": {
+          "latency": {
+            "max": 13323.5935,
+            "p95": 11489.5222,
+            "timeoutMs": 100000
+          },
+          "costPerSummary": 0.01
+        }
+      }
+    },
+    "ss4": {
+      "statuses": [
+        "fail",
+        "fail",
+        "fail"
+      ],
+      "ok": false
+    },
+    "ss4H45": {
+      "statuses": [
+        "fail",
+        "pass",
+        "fail"
+      ],
+      "ok": false
+    }
+  },
+  "verdict": {
+    "verdict": "MOVE-FLAGGED",
+    "summarizerEligible": false,
+    "judgeEligible": false,
+    "defaults": {
+      "summarizerModel": "claude-haiku-5-5",
+      "factsModel": "claude-haiku-5-5",
+      "judgeThreshold": "unchanged (no τ* exists)"
+    },
+    "flag": {
+      "summarizerFailed": [
+        {
+          "rule": "S-state inventedDatesZero",
+          "value": 9.6,
+          "bound": 9.8
+        },
+        {
+          "rule": "SS5",
+          "value": 3297.916667,
+          "bound": 2574.700001
+        },
+        {
+          "rule": "SS4",
+          "value": "fail, fail, fail",
+          "bound": "pass, pass, pass"
+        }
+      ],
+      "judgeFailed": [
+        "no τ holds JR1 and JR2"
+      ],
+      "judgeThreshold": "stays at today's value: no τ* exists for claude-haiku-5-5",
+      "pin": "UM_SUMMARIZER_MODEL=claude-haiku-4-5-20251001 keeps today's summarizer (and, through it, today's judge)"
+    }
+  },
+  "mode": "live"
+}

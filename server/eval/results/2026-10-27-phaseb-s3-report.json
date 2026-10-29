@@ -1,0 +1,206 @@
+{
+  "scorer": "docs/plans/2026-10-25-model-migration-phase-b/score-s3.mjs",
+  "log": {
+    "servedB": [
+      "gpt-4o-mini-2024-07-18"
+    ],
+    "servedL6e": [
+      "gpt-6-luna"
+    ],
+    "heads": [
+      "36c034882a659a20049d4b3612a02873a816ec38"
+    ],
+    "unregistered": [],
+    "outOfOrder": []
+  },
+  "runs": {
+    "s-state-B-1": {
+      "state": "ok"
+    },
+    "s-state-B-2": {
+      "state": "ok"
+    },
+    "s-state-B-3": {
+      "state": "ok"
+    },
+    "s-state-B-4": {
+      "state": "ok"
+    },
+    "s-state-B-5": {
+      "state": "ok"
+    },
+    "s-state-L6e-1": {
+      "state": "ok"
+    },
+    "s-state-L6e-2": {
+      "state": "ok"
+    },
+    "s-state-L6e-3": {
+      "state": "ok"
+    },
+    "s-state-L6e-4": {
+      "state": "ok"
+    },
+    "s-state-L6e-5": {
+      "state": "ok"
+    },
+    "s-sum-B-1": {
+      "state": "ok"
+    },
+    "s-sum-B-2": {
+      "state": "ok"
+    },
+    "s-sum-B-3": {
+      "state": "ok"
+    },
+    "s-sum-B-4": {
+      "state": "ok"
+    },
+    "s-sum-B-5": {
+      "state": "ok"
+    },
+    "s-sum-L6e-1": {
+      "state": "ok"
+    },
+    "s-sum-L6e-2": {
+      "state": "ok"
+    },
+    "s-sum-L6e-3": {
+      "state": "ok"
+    },
+    "s-sum-L6e-4": {
+      "state": "ok"
+    },
+    "s-sum-L6e-5": {
+      "state": "ok"
+    },
+    "ss4-B-1": {
+      "state": "ok"
+    },
+    "ss4-B-2": {
+      "state": "ok"
+    },
+    "ss4-B-3": {
+      "state": "ok"
+    },
+    "ss4-L6e-1": {
+      "state": "ok"
+    },
+    "ss4-L6e-2": {
+      "state": "ok"
+    },
+    "ss4-L6e-3": {
+      "state": "ok"
+    }
+  },
+  "arms": {
+    "B": {
+      "void": null,
+      "exceptions": 0
+    },
+    "L6e": {
+      "void": null,
+      "exceptions": 0
+    }
+  },
+  "summarizer": {
+    "sState": {
+      "inventedDatesZero": {
+        "mean": 9.8,
+        "bMean": 10,
+        "ok": true
+      },
+      "futureZero": {
+        "mean": 13,
+        "bMean": 12.6,
+        "ok": true
+      },
+      "inFlightStamped": {
+        "mean": 11.2,
+        "bMean": 9,
+        "ok": true
+      },
+      "orderClean": {
+        "mean": 13,
+        "bMean": 13,
+        "ok": true
+      },
+      "retention": {
+        "mean": 10.2,
+        "bMean": 8.2,
+        "ok": true
+      },
+      "pass2": {
+        "mean": 8.6,
+        "bMean": 8.6,
+        "ok": true
+      }
+    },
+    "sSum": {
+      "SS1": {
+        "value": 0.465823,
+        "bound": 0.241139,
+        "ok": true
+      },
+      "SS2": {
+        "value": 0,
+        "bound": 0.25,
+        "ok": true
+      },
+      "SS3": {
+        "value": 12,
+        "bound": 11,
+        "ok": true
+      },
+      "SS5": {
+        "value": 1439.133333,
+        "bound": 1471.225001,
+        "ok": true
+      },
+      "reported": {
+        "arm": {
+          "latency": {
+            "max": 10901.6168,
+            "p95": 8468.7434,
+            "timeoutMs": 100000
+          },
+          "costPerSummary": 0.000901
+        },
+        "B": {
+          "latency": {
+            "max": 7176.4953,
+            "p95": 5084.3379,
+            "timeoutMs": 100000
+          },
+          "costPerSummary": 0.001149
+        }
+      }
+    },
+    "ss4": {
+      "statuses": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "ok": true
+    },
+    "ss4B": {
+      "statuses": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "ok": true
+    }
+  },
+  "verdict": {
+    "verdict": "L6e",
+    "model": "gpt-6-luna",
+    "effort": "low",
+    "defaults": {
+      "summarizerModel": "gpt-6-luna",
+      "summarizerEffort": "low"
+    }
+  },
+  "mode": "live"
+}

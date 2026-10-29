@@ -1,0 +1,1698 @@
+{
+  "timestamp": "2026-10-27T02:27:23.998Z",
+  "fixture": "eval/answer-grader-set.jsonl",
+  "fixtureSha256": "fbcd287a15278d5ebbc35350ec99da4fd587d751405b9f7300723c41af781461",
+  "model": "gpt-4o-mini",
+  "precisionFloor": 0.9,
+  "runs": [
+    {
+      "run": 1,
+      "parseFails": 0,
+      "graded": 80,
+      "sweep": [
+        {
+          "tau": 0.05,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.1,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.15,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.2,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.25,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.3,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.35,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.4,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.45,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.5,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.55,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.6,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.65,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.7,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.75,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.8,
+          "tp": 43,
+          "fp": 0,
+          "fn": 7,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.86,
+          "f1": 0.924731182795699,
+          "fHalf": 0.9684684684684686
+        },
+        {
+          "tau": 0.85,
+          "tp": 36,
+          "fp": 0,
+          "fn": 14,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.72,
+          "f1": 0.8372093023255813,
+          "fHalf": 0.9278350515463917
+        },
+        {
+          "tau": 0.9,
+          "tp": 36,
+          "fp": 0,
+          "fn": 14,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.72,
+          "f1": 0.8372093023255813,
+          "fHalf": 0.9278350515463917
+        },
+        {
+          "tau": 0.95,
+          "tp": 2,
+          "fp": 0,
+          "fn": 48,
+          "tn": 30,
+          "graded": 80,
+          "precision": 1,
+          "recall": 0.04,
+          "f1": 0.07692307692307693,
+          "fHalf": 0.1724137931034483
+        }
+      ],
+      "chosen": {
+        "meetsFloor": true,
+        "tau": 0.05,
+        "precision": 1,
+        "recall": 0.86,
+        "f1": 0.924731182795699,
+        "fHalf": 0.9684684684684686,
+        "tp": 43,
+        "fp": 0,
+        "fn": 7,
+        "tn": 30
+      },
+      "judged": [
+        {
+          "id": "pos-r001",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_af5b2e4445",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1351.4391
+        },
+        {
+          "id": "pos-r002",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_dfc829e7ce",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 901.8790000000001
+        },
+        {
+          "id": "pos-r003",
+          "gold": true,
+          "answers": false,
+          "confidence": 0.7,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_22ba900b6f",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 885.6069000000002
+        },
+        {
+          "id": "pos-r004",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_81cd22f7de",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1040.3843000000002
+        },
+        {
+          "id": "pos-r005",
+          "gold": true,
+          "answers": false,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_f11fe4bcd5",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 792.9913999999999
+        },
+        {
+          "id": "pos-r006",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_fbfbfe4157",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 757.2514000000001
+        },
+        {
+          "id": "pos-r007",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_dfc829e7ce",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 859.1976999999997
+        },
+        {
+          "id": "pos-r008",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_402fb8a3d9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 866.7909
+        },
+        {
+          "id": "pos-r009",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_d08df6a331",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 930.1714999999995
+        },
+        {
+          "id": "pos-r010",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b1c73059a5",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 894.7457999999988
+        },
+        {
+          "id": "pos-r011",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_6794b26d19",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 778.2957000000006
+        },
+        {
+          "id": "pos-r012",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_81cd22f7de",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1057.0154999999995
+        },
+        {
+          "id": "pos-r013",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_242228cf5a",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 795.7800000000007
+        },
+        {
+          "id": "pos-r014",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_d26dee3504",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 739.9698000000008
+        },
+        {
+          "id": "pos-r015",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_242228cf5a",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1125.9655999999995
+        },
+        {
+          "id": "pos-r016",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_0e7150ae59",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1189.5097000000005
+        },
+        {
+          "id": "pos-r017",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_1aa955b2cd",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1196.264000000001
+        },
+        {
+          "id": "pos-r018",
+          "gold": true,
+          "answers": false,
+          "confidence": 0.7,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_b11ef98e16",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 821.9958999999999
+        },
+        {
+          "id": "pos-r019",
+          "gold": true,
+          "answers": false,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_fd3020c6f0",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 858.8614000000016
+        },
+        {
+          "id": "pos-r020",
+          "gold": true,
+          "answers": false,
+          "confidence": 0.7,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_6794b26d19",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 804.3978999999999
+        },
+        {
+          "id": "pos-r021",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_22ba900b6f",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1175.8943
+        },
+        {
+          "id": "pos-r022",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_e9e83bb9dc",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1011.1108999999997
+        },
+        {
+          "id": "pos-r023",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_dfc829e7ce",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 720.1490999999987
+        },
+        {
+          "id": "pos-r024",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_ef1bdd1915",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1304.6277999999984
+        },
+        {
+          "id": "pos-r025",
+          "gold": true,
+          "answers": false,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_d932b185f7",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 841.3639000000003
+        },
+        {
+          "id": "pos-r026",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_6548d98151",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 957.8962000000029
+        },
+        {
+          "id": "pos-r027",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_36b9eb89d1",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 791.8754999999983
+        },
+        {
+          "id": "pos-r028",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_d3b38c8dc1",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 918.6670000000013
+        },
+        {
+          "id": "pos-r029",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_5c838cbcac",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 958.4023000000016
+        },
+        {
+          "id": "pos-r030",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_13bf8fac29",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 898.5515999999989
+        },
+        {
+          "id": "pos-r031",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_8421a6e076",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1063.6525000000001
+        },
+        {
+          "id": "pos-r032",
+          "gold": true,
+          "answers": true,
+          "confidence": 1,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_7b4718ccca",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1082.861399999998
+        },
+        {
+          "id": "pos-r033",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_7ceadae707",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 894.9020999999993
+        },
+        {
+          "id": "pos-r034",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_6548d98151",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 955.5748999999996
+        },
+        {
+          "id": "pos-r035",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_402fb8a3d9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1169.893299999996
+        },
+        {
+          "id": "pos-r036",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_e6f3432039",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 755.3479999999981
+        },
+        {
+          "id": "pos-r037",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_fbfbfe4157",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 974.3470000000016
+        },
+        {
+          "id": "pos-r038",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_e7d38d081f",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 920.389900000002
+        },
+        {
+          "id": "pos-r039",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_2906ed8b8c",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 922.9470000000001
+        },
+        {
+          "id": "pos-r040",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_36b9eb89d1",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 800.2540999999983
+        },
+        {
+          "id": "pos-r041",
+          "gold": true,
+          "answers": true,
+          "confidence": 1,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_7b4718ccca",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1350.1221000000005
+        },
+        {
+          "id": "pos-r042",
+          "gold": true,
+          "answers": false,
+          "confidence": 0.2,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_fbfbfe4157",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 659.2719999999972
+        },
+        {
+          "id": "pos-r043",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_a61d6793b9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 977.6640999999945
+        },
+        {
+          "id": "pos-r044",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_73c5e31c8b",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 946.9122999999963
+        },
+        {
+          "id": "pos-r045",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_13bf8fac29",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1191.8633000000045
+        },
+        {
+          "id": "pos-r046",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_0e7150ae59",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 990.8402999999962
+        },
+        {
+          "id": "pos-r047",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_4c55ec580f",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 820.1275000000023
+        },
+        {
+          "id": "pos-r048",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.8,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_7024f03b42",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 871.982799999998
+        },
+        {
+          "id": "pos-r049",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_7b4718ccca",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1066.074999999997
+        },
+        {
+          "id": "pos-r050",
+          "gold": true,
+          "answers": true,
+          "confidence": 0.9,
+          "category": "answerable",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_8284007ad9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 849.8957000000009
+        },
+        {
+          "id": "neg-na01",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_16c1774bc0",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1020.6209999999992
+        },
+        {
+          "id": "neg-na02",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_402fb8a3d9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 920.4369000000006
+        },
+        {
+          "id": "neg-na03",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_a71b930f7c",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 721.0620999999956
+        },
+        {
+          "id": "neg-na04",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9348991c96",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 877.4589000000051
+        },
+        {
+          "id": "neg-na05",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_81cd22f7de",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 650.0795999999973
+        },
+        {
+          "id": "neg-na06",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_a7771298d9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1005.7811000000002
+        },
+        {
+          "id": "neg-na07",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_c8a50cb3d4",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1197.9271999999983
+        },
+        {
+          "id": "neg-na08",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9348991c96",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 692.8124000000025
+        },
+        {
+          "id": "neg-na09",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9017dcc87e",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 883.0195000000022
+        },
+        {
+          "id": "neg-na10",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9348991c96",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 779.1840000000011
+        },
+        {
+          "id": "neg-na11",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_f11fe4bcd5",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 780.2231000000029
+        },
+        {
+          "id": "neg-na12",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_d08df6a331",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 884.1201999999976
+        },
+        {
+          "id": "neg-na13",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.1,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_573cddfef2",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 720.7750000000015
+        },
+        {
+          "id": "neg-na14",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_a61d6793b9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 862.719299999997
+        },
+        {
+          "id": "neg-na15",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_a7771298d9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1124.9537999999957
+        },
+        {
+          "id": "neg-na16",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_71fee889d4",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1020.5162999999957
+        },
+        {
+          "id": "neg-na17",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_9017dcc87e",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 918.2718000000023
+        },
+        {
+          "id": "neg-na18",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_81cd22f7de",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 769.0807999999961
+        },
+        {
+          "id": "neg-na19",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_573cddfef2",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 859.2854999999981
+        },
+        {
+          "id": "neg-na20",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_d08df6a331",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 799.2885999999999
+        },
+        {
+          "id": "neg-na21",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_7b4718ccca",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 1131.152399999999
+        },
+        {
+          "id": "neg-na22",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_8284007ad9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 695.5014000000083
+        },
+        {
+          "id": "neg-na23",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_2906ed8b8c",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 877.027700000006
+        },
+        {
+          "id": "neg-na24",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_8284007ad9",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 701.8368999999948
+        },
+        {
+          "id": "neg-na25",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_73c5e31c8b",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 841.855899999995
+        },
+        {
+          "id": "neg-na26",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_2851888338",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 639.2245000000112
+        },
+        {
+          "id": "neg-na27",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_f11fe4bcd5",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 733.5561000000016
+        },
+        {
+          "id": "neg-na28",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_36b9eb89d1",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 786.9881000000023
+        },
+        {
+          "id": "neg-na29",
+          "gold": false,
+          "answers": false,
+          "confidence": 0.9,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_fbfbfe4157",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 827.0572000000102
+        },
+        {
+          "id": "neg-na30",
+          "gold": false,
+          "answers": false,
+          "confidence": 0,
+          "category": "hard-topical",
+          "ok": true,
+          "requestParams": {
+            "model": "gpt-4o-mini",
+            "temperature": 0,
+            "max_tokens": 256
+          },
+          "servedModel": "gpt-4o-mini-2024-07-18",
+          "systemFingerprint": "fp_fbfbfe4157",
+          "reasoningTokens": 0,
+          "stopReason": "stop",
+          "ms": 843.5043000000005
+        }
+      ]
+    }
+  ]
+}

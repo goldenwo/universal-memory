@@ -1,8 +1,8 @@
 /**
  * server/lib/provider/google.mjs — Google implementation of the Standard Provider Contract.
  *
- * Supports all three surfaces: embeddings (text-embedding-004), summarizer
- * (gemini-2.0-flash), and facts (gemini-2.0-flash).
+ * Supports all three surfaces: embeddings (gemini-embedding-2), summarizer
+ * (gemini-3.6-flash), and facts (gemini-3.6-flash) — see `defaults` below.
  *
  * Auth: Three-key precedence (Feas-4 from review loop) allows graceful override:
  *   1. UM_GOOGLE_API_KEY (UM-prefixed wins to allow power users to override)

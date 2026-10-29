@@ -848,6 +848,66 @@ test('5b: DI seam contract — persona threads through as undefined (not null) w
   await fs.rm(vault, { recursive: true, force: true });
 });
 
+// Spec R4 (model migration Phase B): with UM_AUTOSUPERSEDE_THRESHOLD unset, the chunk
+// transaction passes judgeThreshold undefined, so the detector applies its own provider-
+// resolved default (τ* 0.85 on openai). A manufactured number here would pin every provider
+// to one value. Set, the env value is passed as a number. It is parsed as the in-band path
+// parses it (supersede.mjs judgeThresholdOverride), so a malformed value cannot make the two
+// paths disagree: blank or non-numeric → undefined (the default), never NaN or 0.
+test('5b: judgeThreshold threads through as undefined when UM_AUTOSUPERSEDE_THRESHOLD is unset or malformed, and as its number when set', async () => {
+  const saved = process.env.UM_AUTOSUPERSEDE_THRESHOLD;
+  const seen = [];
+  try {
+    for (const value of [undefined, '0.9', ' ', 'abc', '0.1garbage']) {
+      if (value === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = value;
+      const vault = makeVault();
+      const result = await runChunkTransaction(
+        baseArgs(vault, { lane: 'work' }),
+        baseDeps({
+          isAutoSupersedeEnabled: () => true,
+          detectContradictions: async (text, opts) => { seen.push(opts); return []; },
+        }),
+      );
+      assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+      await fs.rm(vault, { recursive: true, force: true });
+    }
+  } finally {
+    if (saved === undefined) delete process.env.UM_AUTOSUPERSEDE_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_THRESHOLD = saved;
+  }
+  assert.equal(seen.length, 5);
+  assert.equal(seen[4].judgeThreshold, undefined, 'partly numeric → undefined (parseFloat would read 0.1)');
+  assert.equal('judgeThreshold' in seen[0], true, 'the key is passed');
+  assert.equal(seen[0].judgeThreshold, undefined, 'unset → undefined, so the detector default applies');
+  assert.equal(seen[1].judgeThreshold, 0.9);
+  assert.equal(seen[2].judgeThreshold, undefined, 'whitespace → undefined (Number(" ") would be 0: supersede at any confidence)');
+  assert.equal(seen[3].judgeThreshold, undefined, 'non-numeric → undefined (Number("abc") would be NaN: never supersede)');
+});
+
+// The same class for the retrieval cosine override: whitespace must not become 0 (retrieve every
+// candidate) nor 'abc' NaN (retrieve none). Blank or non-numeric → undefined, the detector's 0.45.
+test('5b: retrievalThreshold is undefined when UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD is unset or malformed, and its number when set', async () => {
+  const saved = process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD;
+  const seen = [];
+  try {
+    for (const value of [undefined, '0.5', ' ', 'abc', '0.1garbage']) {
+      if (value === undefined) delete process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD = value;
+      const vault = makeVault();
+      const result = await runChunkTransaction(
+        baseArgs(vault, { lane: 'work' }),
+        baseDeps({
+          isAutoSupersedeEnabled: () => true,
+          detectContradictions: async (text, opts) => { seen.push(opts.retrievalThreshold); return []; },
+        }),
+      );
+      assert.ok(result.committed, `expected committed, got: ${JSON.stringify(result)}`);
+      await fs.rm(vault, { recursive: true, force: true });
+    }
+  } finally {
+    if (saved === undefined) delete process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD; else process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD = saved;
+  }
+  assert.deepEqual(seen, [undefined, 0.5, undefined, undefined, undefined]);
+});
+
 // ===========================================================================
 // Section F — per-chunk cost telemetry.
 // ===========================================================================

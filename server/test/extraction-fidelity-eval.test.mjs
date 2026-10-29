@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { callStats, controlProvider, fixtureDigests, loadReplay } from '../eval/extraction-fidelity-eval.mjs';
+import { callStats, controlProvider, fixtureDigests, loadReplay, judgeRecord } from '../eval/extraction-fidelity-eval.mjs';
 import { facts } from '../lib/facts.mjs';
 
 const NOOP = { counter: () => {}, histogram: () => {} };
@@ -117,4 +117,16 @@ test('facts() passes the request record through (null when the provider reports 
   assert.equal(b.requestParams, null);
   assert.equal(b.servedModel, null);
   assert.equal(b.reasoningTokens, null);
+});
+
+// Model migration Phase B (spec R2): each judged row keeps the grader's own call records — the R1
+// fields per judge call (recall, then precision), from judgeExtraction — beside its verdicts.
+test('judgeRecord: the row verdicts plus failCause and the per-judge-call records', () => {
+  const calls = [
+    { question: 'recall', ok: true, ms: 5, requestParams: { model: 'gpt-6-luna', reasoning_effort: 'none', max_completion_tokens: 768 }, servedModel: 'gpt-6-luna', systemFingerprint: null, reasoningTokens: 0, stopReason: 'stop' },
+    { question: 'precision', ok: false, failCause: 'misaligned', ms: 6 },
+  ];
+  const r = judgeRecord({ ok: false, failCause: 'misaligned', goldMatched: [false], extractedSupported: [false], calls });
+  assert.deepEqual(r, { ok: false, failCause: 'misaligned', goldMatched: [false], extractedSupported: [false], calls });
+  assert.deepEqual(judgeRecord({ ok: true, goldMatched: [true], extractedSupported: [true] }), { ok: true, goldMatched: [true], extractedSupported: [true], calls: [] });
 });

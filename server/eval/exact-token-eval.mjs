@@ -35,6 +35,7 @@ import { percentile } from './lib/stats.mjs';
 import { IDENTIFIER_RX, MIN_IDENT_LEN } from '../lib/query-shape.mjs';
 import { isRecallable } from '../lib/recallable.mjs';
 import { isSystemDoc } from '../lib/system-docs.mjs';
+import { requestParams, defaults } from '../lib/provider/openai.mjs';
 
 // ─── FROZEN ACCEPT RULE (spec §5.3) — do not edit after a number is observed ───
 const GATES = {
@@ -201,9 +202,11 @@ async function generateQueries(rows, apiKey, log) {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+        // The summarizer default's request shape (model migration Phase B, spec R4): gpt-6-luna
+        // drops temperature 0 and sends effort none. Unmeasured here, because #203 is parked; a
+        // re-run of this harness re-baselines its generated queries.
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          temperature: 0,
+          ...requestParams(defaults.summarizerModel, { temperature: 0 }),
           messages: [
             { role: 'system', content: GEN_PROMPT },
             { role: 'user', content: `MEMORY:\n${r.seedText}\n\nIDENTIFIER: ${r.identifier}` },

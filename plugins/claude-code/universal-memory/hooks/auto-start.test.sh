@@ -125,27 +125,46 @@ else
   fail "T4-reports-started: $out"
 fi
 
+# The lock is a file created with bash's noclobber redirect (O_CREAT|O_EXCL), not a mkdir
+# directory: Ubuntu 26.04's uutils mkdir returns 0 when a racing mkdir made the directory first,
+# so two starts could both take a mkdir lock (T7 failed there).
+LOCK_FILE="$THOME/.um/state/auto-start.lockfile"
+
 # ─── T5: fresh lock held → skip, no docker ──────────────────────────────────
 echo ""
 echo "=== T5: fresh lock held ⇒ skip ==="
 reset_state
-mkdir -p "$THOME/.um/state/auto-start.lock"
+mkdir -p "$THOME/.um/state"
+: > "$LOCK_FILE"
 out=$(run_hook UM_SERVER_URL="http://localhost:6335" UM_COMPOSE_DIR="$COMPOSE_DIR")
 rc=$?
 if [ "$rc" -eq 0 ]; then pass "T5-exit-0"; else fail "T5-exit-0 (rc=$rc)"; fi
 if [ "$(docker_calls)" = "0" ]; then pass "T5-no-docker"; else fail "T5-no-docker: $(cat "$DOCKER_LOG" 2>/dev/null)"; fi
+if [ -f "$LOCK_FILE" ]; then pass "T5-held-lock-untouched"; else fail "T5-held-lock-untouched"; fi
+
+# ─── T5b: a lock directory left by an older version does not block a start ──
+echo ""
+echo "=== T5b: old auto-start.lock directory ⇒ ignored ==="
+reset_state
+mkdir -p "$THOME/.um/state/auto-start.lock"
+out=$(run_hook UM_SERVER_URL="http://localhost:6335" UM_COMPOSE_DIR="$COMPOSE_DIR")
+rc=$?
+if [ "$rc" -eq 0 ]; then pass "T5b-exit-0"; else fail "T5b-exit-0 (rc=$rc)"; fi
+if [ "$(docker_calls)" = "1" ]; then pass "T5b-compose-runs"; else fail "T5b-compose-runs: $(cat "$DOCKER_LOG" 2>/dev/null)"; fi
+rmdir "$THOME/.um/state/auto-start.lock" 2>/dev/null || true
 
 # ─── T6: stale lock (>5 min) → stolen, compose runs ─────────────────────────
 echo ""
 echo "=== T6: stale lock ⇒ stolen ==="
 reset_state
-mkdir -p "$THOME/.um/state/auto-start.lock"
-touch -d '10 minutes ago' "$THOME/.um/state/auto-start.lock" 2>/dev/null || true
+mkdir -p "$THOME/.um/state"
+: > "$LOCK_FILE"
+touch -d '10 minutes ago' "$LOCK_FILE" 2>/dev/null || true
 out=$(run_hook UM_SERVER_URL="http://localhost:6335" UM_COMPOSE_DIR="$COMPOSE_DIR")
 rc=$?
 if [ "$rc" -eq 0 ]; then pass "T6-exit-0"; else fail "T6-exit-0 (rc=$rc)"; fi
 if [ "$(docker_calls)" = "1" ]; then pass "T6-compose-after-steal"; else fail "T6-compose-after-steal: $(cat "$DOCKER_LOG" 2>/dev/null)"; fi
-if [ ! -d "$THOME/.um/state/auto-start.lock" ]; then pass "T6-lock-released"; else fail "T6-lock-released"; fi
+if [ ! -e "$LOCK_FILE" ]; then pass "T6-lock-released"; else fail "T6-lock-released"; fi
 
 # ─── T7: two near-simultaneous starts → at most one compose up ──────────────
 echo ""

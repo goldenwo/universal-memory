@@ -53,7 +53,7 @@ import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState, logShaping } from './update-state.mjs';
 import { effectiveAsOf, shapeState, UNMERGED_SUMMARY_HEADING, MARKER_STATE_MERGE_UNAVAILABLE } from './state-cap.mjs';
 import { detectContradictionsInBatch as defaultDetectContradictions } from './contradiction-batch.mjs';
-import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled as defaultIsAutoSupersedeEnabled } from './supersede.mjs';
+import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled as defaultIsAutoSupersedeEnabled, judgeThresholdOverride, parseNumberEnv } from './supersede.mjs';
 import { recordCaptureEvent as defaultRecordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { advanceCursor } from './checkpoint-cursor.mjs';
 import { writePendingReindex, deletePendingReindex } from './pending-reindex.mjs';
@@ -296,13 +296,11 @@ export async function runChunkTransaction(args, deps = {}) {
   const systemPrompt = deps.systemPrompt;
   const model = deps.model;
   // D3.3: independent judge/retrieval threshold overrides — same env vars as
-  // checkpoint.mjs; undefined lets the detector apply its own eval-derived default.
-  const autoJudgeThreshold = process.env.UM_AUTOSUPERSEDE_THRESHOLD
-    ? Number(process.env.UM_AUTOSUPERSEDE_THRESHOLD)
-    : undefined;
-  const autoRetrievalThreshold = process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD
-    ? Number(process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD)
-    : undefined;
+  // checkpoint.mjs; undefined lets the detector apply its own eval-derived default (the judge
+  // provider's τ). The judge override is parsed exactly as the in-band path parses it.
+  const autoJudgeThreshold = judgeThresholdOverride();
+  // Parsed the same way: blank or not wholly numeric → undefined (the detector's 0.45).
+  const autoRetrievalThreshold = parseNumberEnv(process.env.UM_AUTOSUPERSEDE_RETRIEVAL_THRESHOLD);
 
   // Single clock() call (append-turn.mjs convention) — reused for both the
   // per-day telemetry path and the frontmatter's valid_from so both reflect

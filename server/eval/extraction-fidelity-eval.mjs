@@ -140,6 +140,21 @@ export function callStats(calls) {
   };
 }
 
+/**
+ * A judged row's grader record: the verdicts, why ok is false, and one record per judge call
+ * (recall, then precision) with its R1 fields and latency, from judgeExtraction (model
+ * migration Phase B, spec R2 — G's request shape and served model are checked per call).
+ */
+export function judgeRecord(v) {
+  return {
+    ok: v.ok,
+    ...(v.failCause ? { failCause: v.failCause } : {}),
+    goldMatched: v.goldMatched,
+    extractedSupported: v.extractedSupported,
+    calls: v.calls ?? [],
+  };
+}
+
 /** Normalize facts() output to a plain string list (factsInvoke returns string[]; defensive on objects). */
 function normalizeExtracted(factsResult) {
   const f = factsResult?.facts;
@@ -193,14 +208,17 @@ async function cliMain() {
   }
 
   const { facts } = await import('../lib/facts.mjs');
-  const model = process.env.UM_EXTRACTION_GRADER_MODEL ?? 'gpt-4o-mini';
+  // The grader: G's verdict, gpt-5.6-luna (model migration Phase B window 2, committed 0c4ca22),
+  // through the library's own fallback constant so the eval and judgeExtraction cannot disagree.
+  const { EXTRACTION_GRADER_FALLBACK_MODEL } = await import('../lib/extraction-grader.mjs');
+  const model = process.env.UM_EXTRACTION_GRADER_MODEL || EXTRACTION_GRADER_FALLBACK_MODEL;
   const rows = [];
   for (const fixture of args.fixtures) rows.push(...await loadFixtureJsonl(fixture));
   const fixtureSha256 = await fixtureDigests(args.fixtures);
 
   // Truthful provider/model labels: captured from facts()'s own per-call return
   // ({provider, model} — facts.mjs), NEVER re-derived from env/registry (the old
-  // env-only label reported 'gpt-4.1-nano (provider default)' on anthropic runs).
+  // env-only label reported the openai facts default, gpt-4.1-nano, on anthropic runs).
   let factsProvider = null;
   let factsModelSeen = null;
   const factsConfig = {
@@ -275,7 +293,7 @@ async function cliMain() {
         continue;
       }
       const v = await judgeExtraction(row.input_text, gold, extracted, { model });
-      call.judge = { ok: v.ok, goldMatched: v.goldMatched, extractedSupported: v.extractedSupported };
+      call.judge = judgeRecord(v);
       judgedRows.push({
         id: row.id, ok: v.ok, stratum: row.stratum,
         goldTotal: gold.length,

@@ -235,16 +235,18 @@ export const umLaneClassifiedTotal = new promClient.Counter({
 // Counts ONLY the supersede-eligible in-band slice that reached the inline judge
 // (flag-on + partitioned + cosine in the contradiction-overlap band). Normal
 // keep-older dedup merges are NOT counted here — they remain under um_dedup_total.
-// `outcome` ∈ {'superseded','declined','demote_error'} — fixed enum, never user
+// `outcome` ∈ {'superseded','declined','demote_error','judge_error'} — fixed enum, never user
 // input (bounded cardinality):
 //   superseded   — judge confirmed; older point demoted, newer persisted current.
 //   declined     — judge consulted but not a confident contradiction → kept-older.
 //   demote_error — judge confirmed + newer persisted, but the demotion setPayload
 //                  failed (fail-soft: newer is still current; older stays current
 //                  for the session-end detector — never "no current fact").
+//   judge_error  — the judge call itself failed (invoke-error) → kept-older; a dead or
+//                  shut-down judge model shows here, not as a decline (model migration Phase B).
 export const umInbandSupersedeTotal = new promClient.Counter({
   name: 'um_inband_supersede_total',
-  help: 'Write-time in-band supersession outcomes (Gap-5 P3): superseded|declined|demote_error',
+  help: 'Write-time in-band supersession outcomes (Gap-5 P3): superseded|declined|demote_error|judge_error',
   labelNames: ['outcome'],
   registers: [registry],
 });
