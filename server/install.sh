@@ -118,6 +118,24 @@ trap _um_cleanup EXIT INT TERM
 # Factored here so the two modes can never drift apart on either — a --upgrade
 # that health-checked a different port than --verify would be its own outage.
 
+# Normalize one .env value ($1) the way compose's own .env parser does, and print
+# it. Without this, shapes compose accepts happily break callers:
+# MEM0_MCP_PORT="6335" yields the literal `"6335"` and a health URL that can
+# never answer, which then reads as "the server is down". A quoted value is its
+# contents up to the closing quote (a # inside quotes is data, and an inline
+# comment may follow); an unquoted one ends at a whitespace-separated # comment,
+# trailing whitespace dropped. One rule for both readers below.
+_um_env_value() {
+	local v="${1%$'\r'}"                       # CRLF-authored .env
+	case "$v" in
+		\"*) v="${v#\"}"; v="${v%%\"*}" ;;
+		\'*) v="${v#\'}"; v="${v%%\'*}" ;;
+		*)   v="${v%%[[:space:]]#*}"
+		     v="${v%"${v##*[![:space:]]}"}" ;;
+	esac
+	printf '%s' "$v"
+}
+
 # Load .env WITHOUT clobbering vars the caller explicitly exported (tests pass
 # UM_VAULT_DIR / MEM0_MCP_PORT directly, and an explicit export must win over
 # the file). Malformed lines are skipped with a warning rather than aborting.
@@ -132,21 +150,7 @@ _um_load_env_file() {
 			warn "Skipping malformed .env line: '$_k' is not a valid variable name"
 			continue
 		fi
-		# Normalize the value the way compose's own .env parser does. Without
-		# this, shapes compose accepts happily break callers: MEM0_MCP_PORT="6335"
-		# yields the literal `"6335"` and a health URL that can never answer,
-		# which then reads as "the server is down".
-		_v="${_v%$'\r'}"                      # CRLF-authored .env
-		case "$_v" in
-			'"'*'"')  _v="${_v#\"}"; _v="${_v%\"}" ;;   # quoted: content is verbatim
-			"'"*"'")  _v="${_v#\'}"; _v="${_v%\'}" ;;   # (a # inside quotes is data)
-			*)
-				# Unquoted: an inline comment must be whitespace-separated.
-				_v="${_v%%[[:space:]]#*}"
-				# ...then drop any trailing whitespace it left behind.
-				_v="${_v%"${_v##*[![:space:]]}"}"
-				;;
-		esac
+		_v=$(_um_env_value "$_v")
 		# Only export if not already set in environment
 		if [ -z "${!_k+x}" ]; then
 			export "$_k=$_v"
@@ -1477,10 +1481,12 @@ fi
 # the snapshot simply finds nothing and we fall through to defaults.
 _um_read_backup_value() {
 	# $1=key; stdout=value or empty. Treats first match as authoritative and
-	# returns the bare value the user hand-edited: the contents of a leading
-	# double- or single-quoted string, else the text before an inline
-	# ' # comment'. Quotes and comments are not part of the value; the server
-	# reads numeric knobs wholly numeric, so '120" # tuned' would be ignored.
+	# returns the bare value the user hand-edited (_um_env_value). Quotes and
+	# comments are not part of the value: the server refuses a malformed
+	# protection knob at boot, so '120" # tuned' must come back as 120. That
+	# is also why a stray trailing quote is dropped from an unquoted value —
+	# an earlier version of this reader wrote `"120" # tuned` back as
+	# `120" # tuned`, and a re-run must repair it.
 	#
 	# MUST ALWAYS return 0 (never let grep's no-match exit 1 leak out): this
 	# function is called via $(...) under `set -euo pipefail`, and a non-zero
@@ -1494,12 +1500,8 @@ _um_read_backup_value() {
 		| head -1 \
 		| cut -d= -f2- \
 		|| true)
-	case "$_val" in
-		\"*) _val="${_val#\"}"; _val="${_val%%\"*}" ;;
-		\'*) _val="${_val#\'}"; _val="${_val%%\'*}" ;;
-		*)   _val="${_val%%[[:space:]]#*}"
-		     _val="${_val%"${_val##*[![:space:]]}"}" ;;
-	esac
+	_val=$(_um_env_value "$_val")
+	_val="${_val%[\"\']}"
 	printf '%s' "$_val"
 	return 0
 }

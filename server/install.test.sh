@@ -1530,6 +1530,32 @@ assert_not_contains "T28: no quote leaked into the URL" "$T28_OUT" 'localhost:"6
 assert_contains "T28: inline comment stripped from vault path" "$T28_OUT" "vault-dir"
 assert_not_contains "T28: vault path has no comment residue" "$T28_OUT" "# inline comment"
 
+# T28b: a quoted value WITH an inline comment. The loader's quoted branch used to
+# need the value to end in a quote, so `"6335" # host port` kept its quotes.
+echo ""
+echo "=== T28b: --verify tolerates a quoted value with an inline comment ==="
+T28B="$TMPROOT/t28b"
+mkdir -p "$T28B/vault" "$T28B/plugins" "$T28B/home"
+make_fakebin "$T28B/bin" 200
+T28B_SH=$(make_isolated_server "$T28B/server")
+mkdir -p "$T28B/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T28B/plugins/cache/universal-memory/universal-memory/1.8.1"
+{
+  printf 'MEM0_MCP_PORT="6335" # host port\n'
+  printf 'UM_VAULT_DIR=%s\n' "$T28B/vault"
+  printf "UM_OPENAI_API_KEY='sk-testkey12345' # key\n"
+} > "$T28B/server/.env"
+
+T28B_EXIT=0
+T28B_OUT=$(env PATH="$T28B/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  CLAUDE_PLUGINS_DIR="$T28B/plugins" \
+  HOME="$T28B/home" \
+  bash "$T28B_SH" --verify 2>&1) || T28B_EXIT=$?
+
+assert_exit_zero "T28b: --verify exits 0 with a quoted, commented value" "$T28B_EXIT"
+assert_contains "T28b: port unquoted in health URL" "$T28B_OUT" "http://localhost:6335/health"
+assert_not_contains "T28b: no quote leaked into the URL" "$T28B_OUT" 'localhost:"6335"'
+
 # ─── T32: --upgrade refreshes the um CLI after a healthy server upgrade ──────
 # The CLI is a copy of the repo's scripts with no self-update path, so it stays
 # at whatever version was installed until someone re-runs the installer. That
