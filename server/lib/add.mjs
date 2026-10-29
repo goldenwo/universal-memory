@@ -67,7 +67,8 @@ import { checkContentHashDedup, checkEmbeddingDedup, mergeSurface, mergeSet } fr
 import { validateLanePersonaSlug } from './default-project.mjs';
 import { getRealClient } from './qdrant-client-resolver.mjs';
 import { classifyLane as defaultClassifyLane, classifierEnabled as defaultClassifierEnabled } from './lane-classifier.mjs';
-import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint, parseNumberEnv } from './supersede.mjs';
+import { isAutoSupersedeEnabled, evaluateInBandSupersession, supersedePoint } from './supersede.mjs';
+import { parseNumberEnv } from './env-number.mjs';
 import { recordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { normalizeReactionMetadata, SIGNAL_EVENTS } from './reaction-signal.mjs';
 
