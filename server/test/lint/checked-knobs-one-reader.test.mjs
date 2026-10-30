@@ -22,7 +22,8 @@ const OWNER = join(SERVER, 'lib', 'checked-knobs.mjs');
 
 const NAMES = Object.keys(CHECKED_KNOBS).join('|');
 // env.NAME, env?.NAME, env['NAME'], env?.['NAME'] — on any object called env.
-const DIRECT = new RegExp(`\\benv\\??\\.(?:(?:${NAMES})\\b|\\[\\s*['"\`](?:${NAMES})['"\`]\\s*\\])`);
+const DIRECT = new RegExp(
+  `\\benv(?:\\??\\.(?:${NAMES})\\b|(?:\\?\\.)?\\[\\s*['"\`](?:${NAMES})['"\`]\\s*\\])`);
 // const { NAME } = process.env / = env
 const DESTRUCTURE = new RegExp(`\\{[^}]*\\b(?:${NAMES})\\b[^}]*\\}\\s*=\\s*(?:process\\.)?env\\b`);
 // A quoted knob name anywhere (envInt('NAME', ...), { envName: 'NAME' }, process.env[k] with k
@@ -69,15 +70,21 @@ test('no module reads a checked knob except through checked-knobs.mjs', () => {
 // The scan's own matcher must fire on the shapes a reader is likely to write, and stay quiet
 // on the allowed calls and on comments.
 test('the scan catches the likely direct reads (positive control)', () => {
+  // Each shape with the rule that must catch it, so a rule that goes dead is noticed even
+  // when another rule still flags the line.
   const caught = [
-    "const p = parseInt(process.env.QDRANT_PORT || '6333', 10);",
-    "const p = env['MEM0_MCP_PORT'];",
-    'const p = env?.QDRANT_PORT;',
-    "function retentionDays() { return envInt('UM_CAPTURE_LEDGER_RETENTION_DAYS', 30); }",
-    "resolvePositiveInt({ envName: 'UM_HTTP_MAX_REQUEST_BYTES', fallback: 1 });",
-    'const { QDRANT_PORT } = process.env;',
+    ["const p = parseInt(process.env.QDRANT_PORT || '6333', 10);", 'direct env read'],
+    ["const p = env['MEM0_MCP_PORT'];", 'direct env read'],
+    ["const p = process.env['QDRANT_PORT'];", 'direct env read'],
+    ['const p = env?.QDRANT_PORT;', 'direct env read'],
+    ["const p = env?.['QDRANT_PORT'];", 'direct env read'],
+    ["function retentionDays() { return envInt('UM_CAPTURE_LEDGER_RETENTION_DAYS', 30); }", 'quoted name'],
+    ["resolvePositiveInt({ envName: 'UM_HTTP_MAX_REQUEST_BYTES', fallback: 1 });", 'quoted name'],
+    ['const { QDRANT_PORT } = process.env;', 'destructured from env'],
   ];
-  for (const line of caught) assert.notDeepEqual(offendersIn(line), [], line);
+  for (const [line, rule] of caught) {
+    assert.ok(offendersIn(line).some((why) => why.startsWith(rule)), `${rule}: ${line}`);
+  }
   const quiet = [
     "const port = checkedKnob('MEM0_MCP_PORT');",
     "port: requireCheckedKnob('QDRANT_PORT', env),",
