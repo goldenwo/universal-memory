@@ -324,11 +324,16 @@ check_prereqs() {
     fi
   fi
   # server/install.sh generates the access token with openssl, unless one is
-  # exported or a re-run reuses the one in server/.env (the same test it makes).
-  # A quoted empty value (UM_AUTH_TOKEN="") is no token: server/install.sh
-  # strips the quotes.
+  # exported or a re-run reuses the one in server/.env (the same test it makes:
+  # its _um_env_file_value reads compose's key syntax — indented, `export`, a
+  # space before `=` — and takes the LAST line for the key). A quoted empty
+  # value (UM_AUTH_TOKEN="") is no token: server/install.sh strips the quotes.
+  _um_tok_line=$(grep -E '^[[:space:]]*(export[[:space:]]+)?UM_AUTH_TOKEN[[:space:]]*=' \
+    "$INSTALL_DIR/server/.env" 2>/dev/null || true)
+  _um_tok_line="${_um_tok_line##*$'\n'}"
+  _um_tok_re="=[[:space:]]*[\"']?[^\"'[:space:]]"
   if [[ $INSTALL_SERVER -eq 1 && -z "${UM_AUTH_TOKEN:-}" ]] \
-      && ! grep -qE "^UM_AUTH_TOKEN=[\"']?[^\"'[:space:]]" "$INSTALL_DIR/server/.env" 2>/dev/null; then
+      && ! [[ "$_um_tok_line" =~ $_um_tok_re ]]; then
     command -v openssl >/dev/null 2>&1 || missing+=("openssl")
   fi
   # bash is always needed

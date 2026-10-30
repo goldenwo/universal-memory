@@ -215,3 +215,39 @@ test('Gap-5 drift gate: eval-pinned defaults τ_lane=0.30 + margin=0.08 + topK=3
     _resetPrototypesForTest();
   }
 });
+
+// The three lane knobs read like every numeric env knob (lib/env-number.mjs): a malformed
+// value is no override, so the pinned default applies — never a numeric prefix.
+test('lane env knobs: a malformed value falls back to the pinned default', async () => {
+  const keys = ['UM_LANE_CLASSIFIER_THRESHOLD', 'UM_LANE_CLASSIFIER_MARGIN', 'UM_LANE_CLASSIFIER_TOPK'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) delete process.env[k];
+  try {
+    _resetPrototypesForTest();
+    const protos = [{ slug: 'a', vectors: [[1, 0]] }, { slug: 'b', vectors: [[0, 1]] }];
+    // Margin '0x' was read as 0, which turns the ambiguity guard off and routed a tie.
+    for (const raw of ['0x', ' ']) {
+      process.env.UM_LANE_CLASSIFIER_MARGIN = raw;
+      const tie = await classifyLane([1, 1], { _prototypes: protos });
+      assert.equal(tie.lane, null, `margin ${JSON.stringify(raw)} → default 0.08 omits the tie`);
+    }
+    delete process.env.UM_LANE_CLASSIFIER_MARGIN;
+    // Threshold '0.99x' was read as 0.99, above the clear winner's 0.98.
+    process.env.UM_LANE_CLASSIFIER_THRESHOLD = '0.99x';
+    const clear = await classifyLane([1, 0.2], { _prototypes: protos });
+    assert.equal(clear.lane, 'a', 'threshold 0.99x → default 0.30 routes the clear winner');
+    delete process.env.UM_LANE_CLASSIFIER_THRESHOLD;
+    // TopK '2.5' was read as 2. Against [1, 0], a's exemplars score 1, 1 and 0 (top-2 mean
+    // 1.0, top-3 mean 0.667) and b's one exemplar 0.8: K=2 routes a, the default K=3 routes b.
+    const protosK = [{ slug: 'a', vectors: [[1, 0], [1, 0], [0, 1]] }, { slug: 'b', vectors: [[0.8, 0.6]] }];
+    process.env.UM_LANE_CLASSIFIER_TOPK = '2';
+    assert.equal((await classifyLane([1, 0], { _prototypes: protosK })).lane, 'a', 'a well-formed K=2 is honoured');
+    process.env.UM_LANE_CLASSIFIER_TOPK = '2.5';
+    assert.equal((await classifyLane([1, 0], { _prototypes: protosK })).lane, 'b', 'topK 2.5 → default 3');
+  } finally {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+    }
+    _resetPrototypesForTest();
+  }
+});

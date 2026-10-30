@@ -12,9 +12,10 @@
 // Usage:
 //   node server/bin/oauth-revoke.mjs --all
 //   node server/bin/oauth-revoke.mjs --client <client_id>
-//   [--port <p>]   default: $MEM0_MCP_PORT or 6335
+//   [--port <p>]   default: $MEM0_MCP_PORT or 6335 (a malformed value of either is an error)
 //
-// Exit codes: 0 success · 1 transport/non-2xx failure · 2 bad arguments.
+// Exit codes: 0 success · 1 transport/non-2xx failure · 2 bad arguments, or a
+// malformed --port / MEM0_MCP_PORT.
 //
 // NUCLEAR OPTION (server stopped): delete `<UM_VAULT_DIR>/oauth-state.json`
 // while the server is down — this kills ALL grants AND the consent-cookie HMAC
@@ -22,6 +23,7 @@
 // operator who cannot reach a running server always sees the fallback.
 
 import http from 'node:http';
+import { resolveRevokePort } from '../lib/oauth/revoke-port.mjs';
 
 const NUCLEAR_HINT =
   'If the server is not running, stop it and delete <UM_VAULT_DIR>/oauth-state.json ' +
@@ -31,7 +33,7 @@ const USAGE = [
   'Usage:',
   '  oauth-revoke --all                 revoke every grant (tokens + codes)',
   '  oauth-revoke --client <client_id>  revoke one client + its tokens/codes',
-  '  [--port <p>]                       server port (default $MEM0_MCP_PORT or 6335)',
+  '  [--port <p>]                       server port 1-65535 (default $MEM0_MCP_PORT or 6335)',
 ].join('\n');
 
 function fail(code, msg) {
@@ -85,7 +87,12 @@ async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed.error) fail(2, `${parsed.error}\n\n${USAGE}`);
 
-  const port = parsed.port ?? process.env.MEM0_MCP_PORT ?? '6335';
+  let port;
+  try {
+    port = resolveRevokePort(parsed.port);
+  } catch (err) {
+    fail(2, `${err.message}\n\n${USAGE}`);
+  }
   const body = parsed.all ? { all: true } : { client_id: parsed.client };
 
   let res;

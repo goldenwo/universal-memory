@@ -118,38 +118,77 @@ trap _um_cleanup EXIT INT TERM
 # Factored here so the two modes can never drift apart on either — a --upgrade
 # that health-checked a different port than --verify would be its own outage.
 
+# Normalize one .env value ($1) the way compose's own .env parser does, and print
+# it. Without this, shapes compose accepts happily break callers:
+# MEM0_MCP_PORT="6335" yields the literal `"6335"` and a health URL that can
+# never answer, which then reads as "the server is down". Leading whitespace is
+# dropped (compose trims it before every value). Then a quoted value is its
+# contents up to the closing quote (a # inside quotes is data, and an inline
+# comment may follow); an unquoted one ends at a whitespace-separated # comment,
+# trailing whitespace dropped — so `KEY= # c` is the literal `# c`, as in
+# compose. One rule for every .env reader in this script.
+_um_env_value() {
+	local _uev_out
+	_um_env_value_into _uev_out "$1"
+	printf '%s' "$_uev_out"
+}
+
+# As _um_env_value, but assigns the result to the variable named $1 instead of
+# printing it: no subshell, for the per-line loop in _um_load_env_file. The
+# target must not be named _uevi_v (this function's own local would take it).
+_um_env_value_into() {
+	local _uevi_v="${2%$'\r'}"                 # CRLF-authored .env
+	_uevi_v="${_uevi_v#"${_uevi_v%%[![:space:]]*}"}"
+	case "$_uevi_v" in
+		\"*) _uevi_v="${_uevi_v#\"}"; _uevi_v="${_uevi_v%%\"*}" ;;
+		\'*) _uevi_v="${_uevi_v#\'}"; _uevi_v="${_uevi_v%%\'*}" ;;
+		*)   _uevi_v="${_uevi_v%%[[:space:]]#*}"
+		     _uevi_v="${_uevi_v%"${_uevi_v##*[![:space:]]}"}" ;;
+	esac
+	printf -v "$1" '%s' "$_uevi_v"
+}
+
+# The value KEY ($1) has in .env file $2 (default $ENV_FILE), as compose reads
+# it: the key may be indented, prefixed with `export`, or followed by spaces
+# before the `=`; the LAST line for the key wins (compose takes the last
+# occurrence of a duplicated key); the value is normalized by _um_env_value.
+# Prints nothing when the file or the key is absent. Always returns 0, so
+# `$(...)` under `set -e` is safe.
+_um_env_file_value() {
+	local _f="${2:-$ENV_FILE}" _raw=""
+	[ -f "$_f" ] || return 0
+	_raw=$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$_f" 2>/dev/null \
+		| tail -1 | cut -d= -f2- || true)
+	_um_env_value "$_raw"
+}
+
 # Load .env WITHOUT clobbering vars the caller explicitly exported (tests pass
 # UM_VAULT_DIR / MEM0_MCP_PORT directly, and an explicit export must win over
 # the file). Malformed lines are skipped with a warning rather than aborting.
+# A later line for a key this loop already exported overwrites it: compose takes
+# the last occurrence of a duplicated key, and so must every check built on this.
 _um_load_env_file() {
 	[ -f "$ENV_FILE" ] || return 0
+	local _um_loaded=' '
 	while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+		# Key syntax compose accepts: leading whitespace, an `export ` prefix, and
+		# whitespace before the `=` (`KEY = v`) are not part of the name.
+		_k="${_k#"${_k%%[![:space:]]*}"}"
+		[[ "$_k" =~ ^export[[:space:]]+(.*)$ ]] && _k="${BASH_REMATCH[1]}"
+		_k="${_k%"${_k##*[![:space:]]}"}"
 		# Skip comments and blank lines
-		[[ "$_k" =~ ^[[:space:]]*# ]] && continue
+		[[ "$_k" =~ ^# ]] && continue
 		[ -z "$_k" ] && continue
 		# C2: Validate key is a valid shell identifier; skip malformed lines with a warning.
 		if ! [[ "$_k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
 			warn "Skipping malformed .env line: '$_k' is not a valid variable name"
 			continue
 		fi
-		# Normalize the value the way compose's own .env parser does. Without
-		# this, shapes compose accepts happily break callers: MEM0_MCP_PORT="6335"
-		# yields the literal `"6335"` and a health URL that can never answer,
-		# which then reads as "the server is down".
-		_v="${_v%$'\r'}"                      # CRLF-authored .env
-		case "$_v" in
-			'"'*'"')  _v="${_v#\"}"; _v="${_v%\"}" ;;   # quoted: content is verbatim
-			"'"*"'")  _v="${_v#\'}"; _v="${_v%\'}" ;;   # (a # inside quotes is data)
-			*)
-				# Unquoted: an inline comment must be whitespace-separated.
-				_v="${_v%%[[:space:]]#*}"
-				# ...then drop any trailing whitespace it left behind.
-				_v="${_v%"${_v##*[![:space:]]}"}"
-				;;
-		esac
-		# Only export if not already set in environment
-		if [ -z "${!_k+x}" ]; then
+		_um_env_value_into _v "$_v"
+		# Only export if not already set in the environment, or set by this loop.
+		if [ -z "${!_k+x}" ] || [[ "$_um_loaded" == *" $_k "* ]]; then
 			export "$_k=$_v"
+			_um_loaded+="$_k "
 		fi
 	done < "$ENV_FILE"
 }
@@ -219,14 +258,8 @@ _resolved_host_port() {
 # purpose still sees the line once, where the decision is made.
 _um_qdrant_nonloopback() {
 	local _v="${UM_QDRANT_PORT:-}"
-	if [ -z "$_v" ] && [ -f "$ENV_FILE" ]; then
-		_v=$(grep -E '^UM_QDRANT_PORT=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
-		_v="${_v%$'\r'}"
-		case "$_v" in
-			'"'*'"')  _v="${_v#\"}"; _v="${_v%\"}" ;;
-			"'"*"'")  _v="${_v#\'}"; _v="${_v%\'}" ;;
-			*)        _v="${_v%%[[:space:]]#*}"; _v="${_v%"${_v##*[![:space:]]}"}" ;;
-		esac
+	if [ -z "$_v" ]; then
+		_v=$(_um_env_file_value UM_QDRANT_PORT)
 	fi
 	[ -n "$_v" ] || return 0
 	case "$_v" in
@@ -1091,16 +1124,12 @@ fi
 # "is a token already available" test below to decide whether openssl is a
 # prerequisite; change them together.
 if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
-	# `|| true` is mandatory: when .env exists but lacks UM_AUTH_TOKEN= (the
-	# v0.5 → v0.6 upgrade case), grep returns 1 and under `set -euo pipefail`
-	# the whole assignment aborts the script. `|| true` swallows the grep miss
-	# and leaves _UM_AT_EXISTING empty, letting the generation branch handle
-	# the fresh-token path downstream.
-	_UM_AT_EXISTING=$(grep -E '^UM_AUTH_TOKEN=' "$ENV_FILE" 2>/dev/null \
-		| head -1 \
-		| cut -d= -f2- \
-		| sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//' \
-		|| true)
+	# Read as compose (and so the server) reads it: the last line's bare value.
+	# Reusing the first line of a token rotated by appending one, or keeping
+	# its quotes and inline comment, would change the bearer token every client
+	# holds. Empty when .env lacks the key (the v0.5 → v0.6 upgrade case), which
+	# lets the generation branch handle the fresh-token path downstream.
+	_UM_AT_EXISTING=$(_um_env_file_value UM_AUTH_TOKEN)
 	if [ -n "$_UM_AT_EXISTING" ]; then
 		UM_AUTH_TOKEN="$_UM_AT_EXISTING"
 		info "Reusing existing UM_AUTH_TOKEN from .env."
@@ -1211,7 +1240,7 @@ fi
 if [ -f "$ENV_FILE" ]; then
 	for _k in UM_MOUNT_MODE UM_MCP_WRITE_ENABLED; do
 		if [ -z "${!_k:-}" ]; then
-			_pv=$(grep -E "^$_k=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+			_pv=$(_um_env_file_value "$_k")
 			if [ -n "$_pv" ]; then printf -v "$_k" '%s' "$_pv"; export "${_k?}"; fi
 		fi
 	done
@@ -1272,7 +1301,7 @@ if [ -f "$ENV_FILE" ]; then
 	# UM_CONTAINER_USER isn't yet in .env (which is the common case for re-runs
 	# of installs that never set the override), and `set -o pipefail` would
 	# otherwise propagate that 1 → `set -e` would kill the script silently.
-	_PRIOR_CONTAINER_USER=$(grep -E '^UM_CONTAINER_USER=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+	_PRIOR_CONTAINER_USER=$(_um_env_file_value UM_CONTAINER_USER)
 fi
 # A re-run with no UM_CONTAINER_USER in the environment keeps the value already
 # in .env: the .env writer emits the key only when it is set, so a pinned
@@ -1476,23 +1505,24 @@ fi
 # BACKUP may be unset if the .env path was a pure fresh install — that's fine,
 # the snapshot simply finds nothing and we fall through to defaults.
 _um_read_backup_value() {
-	# $1=key; stdout=value or empty. Treats first match as authoritative;
-	# strips surrounding double/single quotes to match what the user likely
-	# hand-edited.
+	# $1=key; stdout=value or empty. Reads the backup as compose reads .env
+	# (_um_env_file_value: the last line for the key, bare value). Quotes and
+	# comments are not part of the value: the server refuses a malformed
+	# protection knob at boot, so '120" # tuned' must come back as 120. Two
+	# repairs on top, both for the v0.6 knobs only (numbers, booleans, a log
+	# level): a stray trailing quote is dropped, because an earlier version
+	# of this reader wrote `"120" # tuned` back as `120" # tuned`; and a value
+	# that starts with '#' (compose's reading of `KEY= # c`) is no value, so
+	# the default applies instead of writing a knob the server would refuse.
 	#
-	# MUST ALWAYS return 0 (never let grep's no-match exit 1 leak out): this
-	# function is called via $(...) under `set -euo pipefail`, and a non-zero
-	# return from the pipeline would abort the whole install on every key
-	# that isn't in the backup (which is most keys on a fresh .env path).
-	# Captures pipeline output into a local, explicitly prints it, returns 0.
+	# MUST ALWAYS return 0: this function is called via $(...) under
+	# `set -euo pipefail`, and a non-zero return would abort the whole install
+	# on every key that isn't in the backup (most keys on a fresh .env path).
 	local k="$1" _val=""
 	[ -z "${BACKUP:-}" ] && return 0
-	[ ! -f "$BACKUP" ]  && return 0
-	_val=$(grep -E "^${k}=" "$BACKUP" 2>/dev/null \
-		| head -1 \
-		| cut -d= -f2- \
-		| sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//' \
-		|| true)
+	_val=$(_um_env_file_value "$k" "$BACKUP")
+	_val="${_val%[\"\']}"
+	case "$_val" in \#*) _val="" ;; esac
 	printf '%s' "$_val"
 	return 0
 }

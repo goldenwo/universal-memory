@@ -349,7 +349,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
     const { readStamp } = await import('../server/lib/embedding-stamp.mjs');
     const collection = env.QDRANT_COLLECTION || 'memories';
     const memory = await createMemoryInstance({ env, collection });
-    const qc = new QdrantClient({ host: env.QDRANT_HOST || 'localhost', port: parseInt(env.QDRANT_PORT || '6333', 10) });
+    const { requireCheckedKnob } = await import('../server/lib/checked-knobs.mjs');
+    const qc = new QdrantClient({ host: env.QDRANT_HOST || 'localhost', port: requireCheckedKnob('QDRANT_PORT', env) });
     const { rows } = parseManifest(await fs.readFile(args.manifest || path.join(workdir, 'manifest.jsonl'), 'utf8'));
     const { userId } = await runApplyPreflights({ env, memory, rows, readStampFn: readStamp, embedFn: (t) => embed(t) });
     if (!args.yes) {

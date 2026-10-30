@@ -276,6 +276,45 @@ T3_TOKEN_FILE=$(cat "$T3_HOME/.um/auth-token" 2>/dev/null || echo "")
 assert_eq "T3: seeded token preserved in .env"            "$T3_TOKEN_ENV"  "$SEEDED_TOKEN"
 assert_eq "T3: seeded token mirrored to ~/.um/auth-token" "$T3_TOKEN_FILE" "$SEEDED_TOKEN"
 
+# ─── T3b: the reused token is read as compose reads it ───────────────────────
+# A token rotated by appending a line, quoted, with an inline comment: compose
+# (and so the server) uses the LAST line's bare value. Reusing the first line, or
+# keeping the quote and comment, would change the bearer token every client holds.
+echo ""
+echo "=== T3b: reused UM_AUTH_TOKEN is the last line's bare value ==="
+T3B="$TMPROOT/t3b"
+T3B_HOME="$T3B/home"
+T3B_STAGE="$T3B/stage"
+mkdir -p "$T3B_HOME/vault" "$T3B_HOME/plugins"
+touch "$T3B_HOME/.bashrc"
+make_fakebin "$T3B/bin"
+stage_install_dir "$T3B_STAGE"
+T3B_ENV_FILE="$T3B_STAGE/server/.env"
+T3B_OLD="old0$(printf '%060d' 0)"
+T3B_NEW="new1$(printf '%060d' 0 | tr '0' 'b')"
+cat > "$T3B_ENV_FILE" <<EOF
+OPENAI_API_KEY=sk-old-key-0000
+MEM0_USER_ID=b4testuser
+MEM0_MCP_PORT=6335
+UM_VAULT_DIR=$T3B_HOME/vault
+UM_SUMMARY_ENABLED=true
+UM_TEMPORAL_DECAY=false
+UM_AUTH_TOKEN=$T3B_OLD
+UM_AUTH_TOKEN= "$T3B_NEW" # rotated
+EOF
+
+T3B_EXIT=0
+T3B_OUT=$(run_token_install "$T3B/bin" "$T3B_HOME" "$T3B_STAGE") || T3B_EXIT=$?
+if [ "$T3B_EXIT" -ne 0 ]; then
+  fail_test "T3b: install exits 0" "exit $T3B_EXIT; tail: $(printf '%s\n' "$T3B_OUT" | tail -30)"
+else
+  pass "T3b: install exits 0"
+fi
+T3B_TOKEN_ENV=$(grep -E '^UM_AUTH_TOKEN=' "$T3B_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+T3B_TOKEN_FILE=$(cat "$T3B_HOME/.um/auth-token" 2>/dev/null || echo "")
+assert_eq "T3b: last, bare token kept in .env"            "$T3B_TOKEN_ENV"  "$T3B_NEW"
+assert_eq "T3b: last, bare token mirrored to auth-token"  "$T3B_TOKEN_FILE" "$T3B_NEW"
+
 # ─── T4: fresh install lands all 13 v0.6 keys in .env (Part B) ───────────────
 # Reuses T1's end-state .env (the fresh install in T1).
 echo ""
@@ -332,6 +371,15 @@ UM_TEMPORAL_DECAY=false
 UM_AUTH_TOKEN=seeded000000000000000000000000000000000000000000000000000000aaaa
 UM_RATE_LIMIT_RPM=120
 UM_LOG_LEVEL=debug
+UM_HTTP_MAX_REQUEST_BYTES="1048576" # 1 MB, hand-tuned
+UM_UPSTREAM_RETRY_MAX=5 # hand-tuned
+UM_LOCK_LOW_DISK_THRESHOLD='52428800'
+UM_BRIDGE_JITTER_SEC=20" # what an earlier installer wrote back from "20" # tuned
+UM_RATE_LIMIT_MAX_IPS= "5000"
+UM_OPENAPI_AUTH_REQUIRED=   false
+UM_METRICS_AUTH_REQUIRED= # no value, only a comment
+UM_METRICS_LOOPBACK_ONLY=true
+UM_METRICS_LOOPBACK_ONLY=false
 EOF
 
 T5_EXIT=0
@@ -347,6 +395,34 @@ T5_RPM=$(grep -E '^UM_RATE_LIMIT_RPM=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
 T5_LOG=$(grep -E '^UM_LOG_LEVEL='      "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
 assert_eq "T5: user UM_RATE_LIMIT_RPM preserved"  "$T5_RPM" "120"
 assert_eq "T5: user UM_LOG_LEVEL preserved"       "$T5_LOG" "debug"
+
+# A preserved value comes back bare: quotes and an inline comment are not part of
+# it. The server reads these knobs wholly numeric (server/lib/env-number.mjs), so
+# '1048576" # 1 MB' would silently fall back to the default.
+T5_BYTES=$(grep -E '^UM_HTTP_MAX_REQUEST_BYTES='  "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+T5_RETRY=$(grep -E '^UM_UPSTREAM_RETRY_MAX='      "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+T5_DISK=$(grep -E '^UM_LOCK_LOW_DISK_THRESHOLD=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: double-quoted value with an inline comment preserved bare" "$T5_BYTES" "1048576"
+assert_eq "T5: unquoted value with an inline comment preserved bare"      "$T5_RETRY" "5"
+assert_eq "T5: single-quoted value preserved bare"                        "$T5_DISK"  "52428800"
+# An earlier installer re-emitted `"20" # tuned` as `20" # tuned`; the server refuses
+# a malformed protection knob at boot, so the reader repairs its own earlier output.
+T5_JITTER=$(grep -E '^UM_BRIDGE_JITTER_SEC=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: stray trailing quote from an earlier installer dropped"    "$T5_JITTER" "20"
+# Compose trims whitespace before a quoted value; so must the reader, or the
+# stray-quote drop turns ` "5000"` into ` "5000` and compose rejects the file.
+T5_MAXIPS=$(grep -E '^UM_RATE_LIMIT_MAX_IPS=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: quoted value after leading whitespace preserved bare"      "$T5_MAXIPS" "5000"
+# Compose trims whitespace before any value, quoted or not.
+T5_OPENAPI=$(grep -E '^UM_OPENAPI_AUTH_REQUIRED=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: unquoted value after leading whitespace preserved bare"    "$T5_OPENAPI" "false"
+# `KEY= # c` is the literal '# c' to compose; no v0.6 knob can hold that, so the
+# re-run falls back to the default instead of writing it back.
+T5_MAUTH=$(grep -E '^UM_METRICS_AUTH_REQUIRED=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: a comment-only value falls back to the default"            "$T5_MAUTH" "true"
+# A duplicated key: compose takes the LAST line, so the re-run keeps that one.
+T5_MLOOP=$(grep -E '^UM_METRICS_LOOPBACK_ONLY=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: duplicated key keeps the last line, as compose does"       "$T5_MLOOP" "false"
 
 # Missing keys must land at safe defaults
 T5_BURST=$(grep -E '^UM_RATE_LIMIT_BURST=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)

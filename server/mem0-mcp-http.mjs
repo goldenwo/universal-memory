@@ -77,6 +77,7 @@ import { handleMem0Compat } from './lib/mem0-compat.mjs';
 import { isRecallable } from './lib/recallable.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter, extractRateLimitKey, isMcpHandshakeMessage, defersChargeToMessage, MCP_HANDSHAKE_BUCKET } from './lib/rate-limit.mjs';
+import { checkedKnob } from './lib/checked-knobs.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { resolveHistoryDbPath } from './lib/history-db-path.mjs';
@@ -86,7 +87,7 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig, validateNumericKnobs } from './lib/startup-validation.mjs';
 import { protectedResourceMetadata, authorizationServerMetadata } from './lib/oauth/metadata.mjs';
 import { createStateStore } from './lib/oauth/state-store.mjs';
 import { createOAuthHandlers } from './lib/oauth/endpoints.mjs';
@@ -270,12 +271,19 @@ function requireEnv(name) {
 	return v;
 }
 
-const PORT = parseInt(process.env.MEM0_MCP_PORT || '6335', 10);
 // When run as main, env vars must be set — fail fast. When imported for tests,
 // fall back to harmless defaults so the module loads (tests don't hit initMemory
 // and provide their own memoryClient mocks).
 const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
 if (IS_MAIN) {
+  // A set-but-malformed checked knob (lib/checked-knobs.mjs) refuses boot (#321's rule): its
+  // reader would silently fall back to the default.
+  try {
+    validateNumericKnobs(process.env);
+  } catch (err) {
+    console.error(`[mem0-mcp] FATAL: ${err.message}`);
+    process.exit(1);
+  }
   // R9 mitigation (DE6): refuse unsupported (provider, surface) combos at startup
   // BEFORE initMemory so e.g. UM_EMBEDDING_PROVIDER=anthropic is rejected with a
   // helpful list of valid embedding providers. validateProviderSupport throws;
@@ -340,6 +348,9 @@ if (IS_MAIN) {
     process.exit(1);
   }
 }
+
+// Read after the boot validation above, so a malformed value has already refused boot.
+const PORT = checkedKnob('MEM0_MCP_PORT');
 
 let memory;
 
@@ -482,7 +493,7 @@ export async function initMemory() {
 			provider: 'qdrant',
 			config: {
 				host: process.env.QDRANT_HOST || 'localhost',
-				port: parseInt(process.env.QDRANT_PORT || '6333', 10),
+				port: checkedKnob('QDRANT_PORT'),
 				collectionName: process.env.QDRANT_COLLECTION || 'memories',
 			},
 		},
@@ -1584,15 +1595,12 @@ function handleMcpMessage(msg, ctx = {}) {
 	return null;
 }
 
-// Default request-body cap (spec §5.2): 2 MB. Overridable per-process via
-// UM_HTTP_MAX_REQUEST_BYTES — installer seeds the env with this default.
-// Resolved inside readBody() (not at module load) so tests that mutate the
-// env var between `startServer` calls see the new value on each request.
-const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
-
+// Request-body cap (spec §5.2): 2 MB by default (checked-knobs.mjs). Overridable
+// per-process via UM_HTTP_MAX_REQUEST_BYTES — installer seeds the env with the
+// default. Resolved inside readBody() (not at module load) so tests that mutate
+// the env var between `startServer` calls see the new value on each request.
 function _currentMaxBodyBytes() {
-	const v = parseInt(process.env.UM_HTTP_MAX_REQUEST_BYTES || '', 10);
-	return Number.isFinite(v) && v > 0 ? v : DEFAULT_MAX_BODY_BYTES;
+	return checkedKnob('UM_HTTP_MAX_REQUEST_BYTES');
 }
 
 /**

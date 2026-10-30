@@ -16,6 +16,7 @@ import { umLaneClassifiedTotal } from './metrics.mjs';
 // three). classifyByPrototypes below uses the FAIL-SAFE cosineSimilarity — a bad
 // vector must never throw on the write path.
 import { cosineSimilarity } from './vector.mjs';
+import { parseNumberEnv, parseIntEnv } from './env-number.mjs';
 
 const DEFAULT_TAXONOMY_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'config', 'lane-taxonomy.default.json');
 
@@ -122,19 +123,18 @@ export const LANE_THRESHOLD_DEFAULT = 0.30;
 export const LANE_MARGIN_DEFAULT = 0.08;
 export const LANE_TOPK_DEFAULT = 3;
 
+// A malformed knob is no override (env-number.mjs), never a numeric prefix: a margin of
+// '0x' read as 0 would turn the ambiguity guard off.
 function laneThreshold(env = process.env) {
-  const n = Number.parseFloat(env.UM_LANE_CLASSIFIER_THRESHOLD);
-  return Number.isFinite(n) ? n : LANE_THRESHOLD_DEFAULT;
+  return parseNumberEnv(env.UM_LANE_CLASSIFIER_THRESHOLD) ?? LANE_THRESHOLD_DEFAULT;
 }
 
 function laneMargin(env = process.env) {
-  const n = Number.parseFloat(env.UM_LANE_CLASSIFIER_MARGIN);
-  return Number.isFinite(n) ? n : LANE_MARGIN_DEFAULT;
+  return parseNumberEnv(env.UM_LANE_CLASSIFIER_MARGIN) ?? LANE_MARGIN_DEFAULT;
 }
 
 function laneTopK(env = process.env) {
-  const n = Number.parseInt(env.UM_LANE_CLASSIFIER_TOPK, 10);
-  return Number.isInteger(n) && n > 0 ? n : LANE_TOPK_DEFAULT;
+  return parseIntEnv(env.UM_LANE_CLASSIFIER_TOPK) ?? LANE_TOPK_DEFAULT;
 }
 
 export function classifierEnabled(env = process.env) {

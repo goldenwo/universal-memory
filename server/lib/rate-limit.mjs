@@ -21,16 +21,16 @@
 // (B.2) returns {bypassRateLimit} so /health, /metrics, /openapi etc.
 // skip this limiter entirely.
 
+import { checkedKnob } from './checked-knobs.mjs';
+
 export function createRateLimiter(opts = {}) {
-  const maxIps = parseInt(
-    opts.maxIps ?? process.env.UM_RATE_LIMIT_MAX_IPS ?? '10000',
-    10,
-  );
-  const rpm = parseInt(opts.rpm ?? process.env.UM_RATE_LIMIT_RPM ?? '60', 10);
-  const burst = parseInt(
-    opts.burst ?? process.env.UM_RATE_LIMIT_BURST ?? '10',
-    10,
-  );
+  // Checked knobs (checked-knobs.mjs): a set-but-malformed value refuses boot, so the default
+  // here only covers unset and blank. parseInt used to read a blank or junk value as NaN, and
+  // a NaN rpm or burst makes every token count NaN, which is never < 1: everything admitted.
+  // The rpm is a rate, so 7.5 is meaningful.
+  const maxIps = opts.maxIps ?? checkedKnob('UM_RATE_LIMIT_MAX_IPS');
+  const rpm = opts.rpm ?? checkedKnob('UM_RATE_LIMIT_RPM');
+  const burst = opts.burst ?? checkedKnob('UM_RATE_LIMIT_BURST');
   const refillPerMs = rpm / 60_000;
   const evictThreshold = Math.floor(maxIps * 0.9);
   const map = new Map(); // ip -> { tokens, lastRefill, touched }

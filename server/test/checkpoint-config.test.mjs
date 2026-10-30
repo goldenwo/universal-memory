@@ -5,7 +5,7 @@
 //  - resolvePositiveInt matrix: env-valid wins, env-invalid falls through to
 //    config, config-invalid falls through to fallback.
 //  - resolveFloor: env '0' YIELDS 0 (disable semantics) — the deliberate
-//    contrast with resolvePositiveInt.
+//    contrast with resolvePositiveInt; a blank env value is unset.
 //  - resolveChunkingConfig: all five defaults, each env override, and the
 //    load-bearing blank-env regression (UM_CHECKPOINT_MAX_CHUNKS_PER_RUN=''
 //    must land on 3, not 0).
@@ -198,6 +198,22 @@ test('resolveFloor: env "0" YIELDS 0 (disable semantics — contrast with resolv
   withEnv('0', () => {
     const v = resolveFloor(ENV_NAME, 7, 1);
     assert.equal(v, 0);
+  });
+});
+
+// A blank env value is unset, as for every numeric env knob (lib/env-number.mjs). Number('')
+// is 0, which disabled the floor; '0' must still disable it (above).
+test('resolveFloor: a blank env value falls through to config, never 0', () => {
+  for (const raw of ['', ' ']) {
+    withEnv(raw, () => {
+      assert.equal(resolveFloor(ENV_NAME, 7, 1), 7, JSON.stringify(raw));
+    });
+  }
+});
+
+test('resolveFloor: a non-numeric env value falls through to config', () => {
+  withEnv('5x', () => {
+    assert.equal(resolveFloor(ENV_NAME, 7, 1), 7);
   });
 });
 

@@ -719,6 +719,14 @@ printf 'UM_AUTH_TOKEN=\n' > "$TOS/repo/server/.env"
 _tos_check "an empty token line still needs it" named
 printf 'UM_AUTH_TOKEN=""\n' > "$TOS/repo/server/.env"
 _tos_check "a quoted empty token still needs it" named
+# The line server/install.sh reuses (its _um_env_file_value): compose's key syntax,
+# and the LAST line for the key.
+printf 'export UM_AUTH_TOKEN=tok-test\n' > "$TOS/repo/server/.env"
+_tos_check "an export-prefixed token does not" not-named
+printf '  UM_AUTH_TOKEN = tok-test\n' > "$TOS/repo/server/.env"
+_tos_check "an indented, spaced token does not" not-named
+printf 'UM_AUTH_TOKEN=tok-test\nUM_AUTH_TOKEN=\n' > "$TOS/repo/server/.env"
+_tos_check "a token followed by an empty last line still needs it" named
 rm -rf "$TOS"
 
 # ─── T-YAML-CWD: the PyYAML probe never imports from the working directory ──

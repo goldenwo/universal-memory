@@ -83,6 +83,67 @@ test('env override: UM_RATE_LIMIT_RPM and UM_RATE_LIMIT_BURST', () => {
   }
 });
 
+// Set exactly `vars` among the three limiter knobs (the rest unset), run fn, restore.
+function withRateEnv(vars, fn) {
+  const keys = ['UM_RATE_LIMIT_RPM', 'UM_RATE_LIMIT_BURST', 'UM_RATE_LIMIT_MAX_IPS'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) {
+    if (k in vars) process.env[k] = vars[k]; else delete process.env[k];
+  }
+  try {
+    return fn();
+  } finally {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+    }
+  }
+}
+
+// The limiter's knobs are checked knobs (lib/checked-knobs.mjs): boot refuses a malformed
+// value, and a limiter built without that check (as here) still never sees NaN. parseInt
+// read a blank or junk value as NaN, and a NaN rpm or burst makes every token count NaN,
+// which is never < 1: the limiter admitted everything.
+test('env override: a blank or malformed UM_RATE_LIMIT_RPM / _BURST falls back to the default, never NaN', () => {
+  withRateEnv({ UM_RATE_LIMIT_RPM: 'abc', UM_RATE_LIMIT_BURST: ' ' }, () => {
+    const admit = createRateLimiter();
+    const now = 5_500_000;
+    for (let i = 0; i < 10; i++) {
+      assert.equal(admit('1.2.3.4', now).admitted, true, `request ${i + 1} within the default burst`);
+    }
+    const r = admit('1.2.3.4', now);
+    assert.equal(r.admitted, false, 'default burst 10');
+    assert.ok(r.retryAfterSec >= 1 && r.retryAfterSec <= 2, `default 60 rpm, got ${r.retryAfterSec}`);
+  });
+});
+
+// A rate is not a count: 7.5 rpm refills one token every 8 s (parseInt read it as 7, and a
+// whole-number-only parse would have turned it into the default 60).
+test('env override: UM_RATE_LIMIT_RPM accepts a fractional rate', () => {
+  withRateEnv({ UM_RATE_LIMIT_RPM: '7.5', UM_RATE_LIMIT_BURST: '1' }, () => {
+    const admit = createRateLimiter();
+    let now = 5_700_000;
+    assert.equal(admit('1.2.3.4', now).admitted, true);
+    now += 7_900;
+    assert.equal(admit('1.2.3.4', now).admitted, false, 'under 8 s: not yet refilled');
+    now += 200;
+    assert.equal(admit('1.2.3.4', now).admitted, true, 'after 8 s at 7.5 rpm: one token');
+  });
+});
+
+// '2x' was read as 2, so eviction began at 1 entry and a drained IP got a fresh bucket as
+// soon as another IP arrived. Boot refuses '2x' now (checked-knobs.mjs); a limiter built
+// without that check falls back to the default cap (10000), which keeps both.
+test('env override: UM_RATE_LIMIT_MAX_IPS takes no numeric prefix', () => {
+  withRateEnv({ UM_RATE_LIMIT_MAX_IPS: '2x', UM_RATE_LIMIT_BURST: '1' }, () => {
+    const admit = createRateLimiter();
+    const now = 5_600_000;
+    assert.equal(admit('a', now).admitted, true);
+    assert.equal(admit('a', now).admitted, false);
+    assert.equal(admit('b', now).admitted, true);
+    assert.equal(admit('a', now).admitted, false, 'a kept its drained bucket');
+  });
+});
+
 test('bounded-map with amortized LRU: when size > 90% cap, evict oldest-touched on next new IP', () => {
   const admit = createRateLimiter({ maxIps: 10, rpm: 60, burst: 10 });
   let now = 6_000_000;

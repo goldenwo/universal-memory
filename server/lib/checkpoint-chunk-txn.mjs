@@ -53,7 +53,8 @@ import { summarize as defaultSummarize } from './summarize.mjs';
 import { updateState as defaultUpdateState, logShaping } from './update-state.mjs';
 import { effectiveAsOf, shapeState, UNMERGED_SUMMARY_HEADING, MARKER_STATE_MERGE_UNAVAILABLE } from './state-cap.mjs';
 import { detectContradictionsInBatch as defaultDetectContradictions } from './contradiction-batch.mjs';
-import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled as defaultIsAutoSupersedeEnabled, judgeThresholdOverride, parseNumberEnv } from './supersede.mjs';
+import { supersedePoint as defaultSupersedePoint, isAutoSupersedeEnabled as defaultIsAutoSupersedeEnabled, judgeThresholdOverride } from './supersede.mjs';
+import { parseNumberEnv } from './env-number.mjs';
 import { recordCaptureEvent as defaultRecordCaptureEvent, CAPTURE_EVENTS } from './capture-events.mjs';
 import { advanceCursor } from './checkpoint-cursor.mjs';
 import { writePendingReindex, deletePendingReindex } from './pending-reindex.mjs';
@@ -321,7 +322,7 @@ export async function runChunkTransaction(args, deps = {}) {
     return { stopped: { reason: 'cost_cap' } };
   }
 
-  // ----- Step 2: #185 thin-transcript gate, byte-for-byte, applied to the chunk -----
+  // ----- Step 2: #185 thin-transcript gate (the legacy rule), applied to the chunk -----
   const minTranscriptBytes = resolveFloor(
     'UM_CHECKPOINT_MIN_TRANSCRIPT_BYTES', config.min_transcript_bytes, DEFAULT_MIN_TRANSCRIPT_BYTES);
   const minTranscriptTurns = resolveFloor(

@@ -32,6 +32,8 @@ import {
   recordAttachment,
   aggregateForPoint,
   updatePointRef,
+  reactionSkewMs,
+  reactionHorizonMs,
   _resetCaptureLedgerForTest,
 } from '../lib/capture-ledger.mjs';
 
@@ -460,5 +462,29 @@ test('prune throttle: at most once per process per day (second write does not pr
     assert.ok(!ids.includes(old2), 'after a throttle reset the prune runs again');
   } finally {
     db2.close();
+  }
+});
+
+// The ledger's integer knobs read like every numeric env knob (lib/env-number.mjs): a
+// malformed value is no override, never the numeric prefix parseInt read ('5000ms' as 5000).
+test('ledger env knobs: a numeric prefix, a fraction or a blank is no override', () => {
+  const keys = ['UM_REACTION_TS_SKEW_MS', 'UM_REACTION_MATCH_HORIZON_HOURS'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    process.env.UM_REACTION_TS_SKEW_MS = '5000';
+    assert.equal(reactionSkewMs(), 5000, 'a well-formed value is honoured');
+    for (const raw of ['5000ms', '2.5', ' ']) {
+      process.env.UM_REACTION_TS_SKEW_MS = raw;
+      assert.equal(reactionSkewMs(), 120_000, `skew ${JSON.stringify(raw)} → default`);
+    }
+    process.env.UM_REACTION_MATCH_HORIZON_HOURS = '6h';
+    assert.equal(reactionHorizonMs(), 24 * 3_600_000, 'horizon 6h → default 24 h');
+    // Hours are not a count: a fractional horizon is honoured (parseInt read 1.5 as 1).
+    process.env.UM_REACTION_MATCH_HORIZON_HOURS = '1.5';
+    assert.equal(reactionHorizonMs(), 1.5 * 3_600_000, 'horizon 1.5 h');
+  } finally {
+    for (const k of keys) {
+      if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+    }
   }
 });

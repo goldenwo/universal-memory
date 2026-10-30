@@ -10,6 +10,7 @@
 // must never blank or wrongly flag a hot-path search). This INVERTS the offline grader's
 // ok:false→"didn't answer" — deliberate (spec §2.3).
 import { gradeAnswer as defaultGradeAnswer, TAU_ANSWER } from './answer-grader.mjs';
+import { parseIntEnv } from './env-number.mjs';
 
 // Score gate: top hits scoring ABOVE this skip the LLM (trusted as answering). PINNED 0.60
 // from 2 IDENTICAL live sweeps (2026-06-23, eval/results/2026-06-23-bouncer-sweep-run{1,2}.json):
@@ -32,8 +33,7 @@ export function bouncerEnabled(env = process.env) {
 }
 
 export function bouncerTimeoutMs(env = process.env) {
-  const n = parseInt(env.UM_BOUNCER_TIMEOUT_MS ?? '1500', 10);
-  return Number.isFinite(n) && n > 0 ? n : 1500;
+  return parseIntEnv(env.UM_BOUNCER_TIMEOUT_MS) ?? 1500;
 }
 
 function withTimeout(promise, ms) {

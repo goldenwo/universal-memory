@@ -15,6 +15,21 @@
 
 import { getProvider, supportingProviders } from './provider/registry.mjs';
 import { PRICING } from './pricing.mjs';
+import { CHECKED_KNOBS, requireCheckedKnob } from './checked-knobs.mjs';
+
+/**
+ * Refuse boot when a checked knob (checked-knobs.mjs: the rate limiter, the request-body
+ * cap, the two ports, the capture-ledger retention) is set but malformed. Its reader would
+ * fall back to the default, which for these knobs silently loosens a protection, moves a
+ * port or deletes data; #321's rule (UM_OAUTH_CONSENT_TTL_HOURS below) is that the operator
+ * learns their setting was ignored. Unset or blank is no override and passes.
+ *
+ * @param {Record<string, string>} env - Environment variables
+ * @throws {Error} naming the first malformed knob, its value and what it must be
+ */
+export function validateNumericKnobs(env) {
+  for (const name of Object.keys(CHECKED_KNOBS)) requireCheckedKnob(name, env);
+}
 
 /**
  * Validates summarizer configuration and logs:

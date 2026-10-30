@@ -54,6 +54,8 @@ import { openDb } from './capture-events.mjs';
 import { getLogger } from './logger.mjs';
 import { safeLog } from './obs-fallback.mjs';
 import { umCaptureLedgerErrorsTotal } from './metrics.mjs';
+import { parseIntEnv, parsePositiveNumberEnv } from './env-number.mjs';
+import { checkedKnob } from './checked-knobs.mjs';
 
 const DDL = `
   CREATE TABLE IF NOT EXISTS capture_ledger (
@@ -100,19 +102,22 @@ const DDL = `
 
 const DEFAULT_SKEW_MS = 120_000;
 const DEFAULT_HORIZON_HOURS = 24;
-const DEFAULT_RETENTION_DAYS = 30;
 const DEFAULT_MESSAGES_PER_CAPTURE = 64;
 
 let _lastPruneDay = null; // prune throttle stamp (UTC day)
 
 function envInt(name, fallback) {
-  const n = Number.parseInt(process.env[name] ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  return parseIntEnv(process.env[name]) ?? fallback;
 }
 
 export function reactionSkewMs() { return envInt('UM_REACTION_TS_SKEW_MS', DEFAULT_SKEW_MS); }
-export function reactionHorizonMs() { return envInt('UM_REACTION_MATCH_HORIZON_HOURS', DEFAULT_HORIZON_HOURS) * 3_600_000; }
-function retentionDays() { return envInt('UM_CAPTURE_LEDGER_RETENTION_DAYS', DEFAULT_RETENTION_DAYS); }
+// Hours are a duration, not a count: 1.5 is meaningful.
+export function reactionHorizonMs() {
+  return (parsePositiveNumberEnv(process.env.UM_REACTION_MATCH_HORIZON_HOURS) ?? DEFAULT_HORIZON_HOURS) * 3_600_000;
+}
+// A delete horizon, so a checked knob (checked-knobs.mjs): a malformed value refuses boot
+// rather than pruning at the 30-day default.
+function retentionDays() { return checkedKnob('UM_CAPTURE_LEDGER_RETENTION_DAYS'); }
 function messagesPerCapture() { return envInt('UM_REACTION_MESSAGES_PER_CAPTURE', DEFAULT_MESSAGES_PER_CAPTURE); }
 
 /** DDL-per-operation (see header) — returns the shared singleton handle. */

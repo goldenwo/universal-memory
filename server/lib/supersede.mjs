@@ -30,6 +30,7 @@
 
 import { judgeContradiction, judgeProviderName, JUDGE_BACKENDS } from './contradiction-judge.mjs';
 import { isUsableDate, CLOCK_SKEW_TOLERANCE_MS } from './ranking.mjs';
+import { parseNumberEnv } from './env-number.mjs';
 
 /**
  * resolveSupersessionDirection — the pure direction rule (#276, spec §4.1).
@@ -204,18 +205,6 @@ export function isAutoSupersedeEnabled(env = process.env) {
  */
 export function contradictionBandCeiling(env = process.env) {
   return parseNumberEnv(env.UM_CONTRADICTION_BAND_CEILING) ?? 0.95;
-}
-
-/**
- * A numeric override from the environment, as every supersession knob reads it: the whole
- * trimmed value must be a finite number, else undefined (no override, so the caller's default
- * applies). A malformed value never becomes a partial number ('0.1garbage' read as 0.1 by
- * parseFloat), 0 (' ' read by Number) or NaN ('abc').
- */
-export function parseNumberEnv(raw) {
-  const s = typeof raw === 'string' ? raw.trim() : '';
-  const n = s === '' ? Number.NaN : Number(s);
-  return Number.isFinite(n) ? n : undefined;
 }
 
 // The judge threshold of a provider with no τ* of its own: the value pinned 2026-06-02 on

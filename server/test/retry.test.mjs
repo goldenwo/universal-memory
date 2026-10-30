@@ -80,6 +80,39 @@ test('withRetry respects UM_UPSTREAM_RETRY_MAX env override', async () => {
   }
 });
 
+// UM_UPSTREAM_RETRY_MAX reads like every numeric env knob (lib/env-number.mjs). parseInt read
+// ' ', 'abc' and '-1' as a bound below 0, so `attempt <= max` never held: fn never ran and
+// every call failed with 'upstream failed'. '2x' was read as 2.
+test('withRetry: a blank or malformed UM_UPSTREAM_RETRY_MAX falls back to 3, and fn still runs', async () => {
+  const prev = process.env.UM_UPSTREAM_RETRY_MAX;
+  const fast = { baseDelayMs: 0, jitterMaxMs: 0 };
+  try {
+    for (const raw of [' ', 'abc', '-1', '2x']) {
+      process.env.UM_UPSTREAM_RETRY_MAX = raw;
+      let ran = 0;
+      const out = await withRetry(async () => { ran++; return 'ok'; }, fast);
+      assert.equal(out, 'ok', `${JSON.stringify(raw)}: fn ran and its result came back`);
+      assert.equal(ran, 1);
+      let n = 0;
+      await withRetry(async () => {
+        n++;
+        throw Object.assign(new Error('e'), { retryable: true });
+      }, fast).catch(() => {});
+      assert.equal(n, 4, `${JSON.stringify(raw)}: 1 initial + the default 3 retries`);
+    }
+    process.env.UM_UPSTREAM_RETRY_MAX = '0';
+    let n0 = 0;
+    await withRetry(async () => {
+      n0++;
+      throw Object.assign(new Error('e'), { retryable: true });
+    }, fast).catch(() => {});
+    assert.equal(n0, 1, "'0' still means no retries");
+  } finally {
+    if (prev === undefined) delete process.env.UM_UPSTREAM_RETRY_MAX;
+    else process.env.UM_UPSTREAM_RETRY_MAX = prev;
+  }
+});
+
 // Test hook: opts.maxRetries beats env so checkpoint tests can pass [0,0,0]-equivalent
 test('withRetry: opts.maxRetries beats UM_UPSTREAM_RETRY_MAX', async () => {
   const prev = process.env.UM_UPSTREAM_RETRY_MAX;

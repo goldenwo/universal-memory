@@ -80,6 +80,15 @@ test('bouncerEnabled is opt-IN (default off, trim-aware)', () => {
   assert.equal(bouncerEnabled({ UM_BOUNCER_ENABLED: 'false' }), false);
 });
 
+// A malformed value is no override (lib/env-number.mjs), never the numeric prefix parseInt read.
+test('bouncerTimeoutMs: a numeric prefix, a fraction or a blank is no override', () => {
+  assert.equal(bouncerTimeoutMs({ UM_BOUNCER_TIMEOUT_MS: '800ms' }), 1500);
+  assert.equal(bouncerTimeoutMs({ UM_BOUNCER_TIMEOUT_MS: '800.5' }), 1500);
+  assert.equal(bouncerTimeoutMs({ UM_BOUNCER_TIMEOUT_MS: ' ' }), 1500);
+  assert.equal(bouncerTimeoutMs({ UM_BOUNCER_TIMEOUT_MS: '0' }), 1500);
+  assert.equal(bouncerTimeoutMs({ UM_BOUNCER_TIMEOUT_MS: '1e3' }), 1000, 'parseInt read 1e3 as 1');
+});
+
 test('bouncerTimeoutMs defaults to 1500, parses override, rejects junk', () => {
   assert.equal(bouncerTimeoutMs({}), 1500);
   assert.equal(bouncerTimeoutMs({ UM_BOUNCER_TIMEOUT_MS: '800' }), 800);

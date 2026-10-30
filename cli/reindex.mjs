@@ -802,6 +802,7 @@ export async function createMemoryInstance({ env, collection }) {
   const { Memory } = await import('mem0ai/oss');
   const { getEmbedderConfig } = await import('../server/lib/embed.mjs');
   const { getFactsLlmConfig } = await import('../server/lib/facts.mjs');
+  const { requireCheckedKnob } = await import('../server/lib/checked-knobs.mjs');
   return new Memory({
     version: 'v1.1',
     embedder: getEmbedderConfig(env),
@@ -809,7 +810,8 @@ export async function createMemoryInstance({ env, collection }) {
       provider: 'qdrant',
       config: {
         host: env.QDRANT_HOST || 'localhost',
-        port: parseInt(env.QDRANT_PORT || '6333', 10),
+        // As the server reads it: a malformed QDRANT_PORT throws rather than meaning 6333.
+        port: requireCheckedKnob('QDRANT_PORT', env),
         collectionName: collection,
       },
     },
@@ -926,9 +928,10 @@ export function wrapOldMemoryForReindex(memory, { userId, _listAll = umGetAll })
  */
 export async function createQdrantClient({ env }) {
   const { QdrantClient } = await import('@qdrant/js-client-rest');
+  const { requireCheckedKnob } = await import('../server/lib/checked-knobs.mjs');
   const client = new QdrantClient({
     host: env.QDRANT_HOST || 'localhost',
-    port: parseInt(env.QDRANT_PORT || '6333', 10),
+    port: requireCheckedKnob('QDRANT_PORT', env),
   });
   return {
     async updateAlias({ alias, collection }) {
