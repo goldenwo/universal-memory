@@ -21,7 +21,8 @@ export function parseNumberEnv(raw) {
 
 /**
  * parseNumberEnv, kept only when it is a safe integer within [min, max]; else undefined.
- * A fraction is malformed for an integer knob, never truncated ('3.5' is not 3).
+ * min defaults to 1, so '0' is rejected unless the caller passes { min: 0 }. A fraction is
+ * malformed for an integer knob, never truncated ('3.5' is not 3).
  */
 export function parseIntEnv(raw, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
   const n = parseNumberEnv(raw);
@@ -34,7 +35,7 @@ export function parsePositiveNumberEnv(raw) {
   return n > 0 ? n : undefined;
 }
 
-/** A TCP port (1-65535) from the environment, else `fallback`. */
-export function parsePortEnv(raw, fallback) {
-  return parseIntEnv(raw, { min: 1, max: 65535 }) ?? fallback;
+/** A TCP port (1-65535) from the environment, else undefined. */
+export function parsePortEnv(raw) {
+  return parseIntEnv(raw, { min: 1, max: 65535 });
 }

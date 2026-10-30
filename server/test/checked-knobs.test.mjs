@@ -24,6 +24,14 @@ test('requireCheckedKnob: a set-but-malformed value throws, naming the variable 
   assert.equal(requireCheckedKnob('UM_CAPTURE_LEDGER_RETENTION_DAYS', { UM_CAPTURE_LEDGER_RETENTION_DAYS: '400' }), 400);
 });
 
+test('an unknown knob name is a named error, and the table cannot be edited at runtime', () => {
+  assert.throws(() => checkedKnob('UM_NOT_A_KNOB', {}), /unknown checked knob: UM_NOT_A_KNOB/);
+  assert.throws(() => requireCheckedKnob('constructor', {}), /unknown checked knob: constructor/);
+  for (const [name, k] of Object.entries(CHECKED_KNOBS)) {
+    assert.ok(Object.isFrozen(k), `${name} entry is frozen`);
+  }
+});
+
 // Parity: for every knob and every value, boot either refuses it or the reader honours
 // exactly what boot accepted; a non-blank value the reader would ignore never boots.
 test('parity: what requireCheckedKnob accepts is what checkedKnob reads, for every knob', () => {

@@ -134,17 +134,18 @@ _um_env_value() {
 }
 
 # As _um_env_value, but assigns the result to the variable named $1 instead of
-# printing it: no subshell, for the per-line loop in _um_load_env_file.
+# printing it: no subshell, for the per-line loop in _um_load_env_file. The
+# target must not be named _uevi_v (this function's own local would take it).
 _um_env_value_into() {
-	local v="${2%$'\r'}"                       # CRLF-authored .env
-	v="${v#"${v%%[![:space:]]*}"}"
-	case "$v" in
-		\"*) v="${v#\"}"; v="${v%%\"*}" ;;
-		\'*) v="${v#\'}"; v="${v%%\'*}" ;;
-		*)   v="${v%%[[:space:]]#*}"
-		     v="${v%"${v##*[![:space:]]}"}" ;;
+	local _uevi_v="${2%$'\r'}"                 # CRLF-authored .env
+	_uevi_v="${_uevi_v#"${_uevi_v%%[![:space:]]*}"}"
+	case "$_uevi_v" in
+		\"*) _uevi_v="${_uevi_v#\"}"; _uevi_v="${_uevi_v%%\"*}" ;;
+		\'*) _uevi_v="${_uevi_v#\'}"; _uevi_v="${_uevi_v%%\'*}" ;;
+		*)   _uevi_v="${_uevi_v%%[[:space:]]#*}"
+		     _uevi_v="${_uevi_v%"${_uevi_v##*[![:space:]]}"}" ;;
 	esac
-	printf -v "$1" '%s' "$v"
+	printf -v "$1" '%s' "$_uevi_v"
 }
 
 # The value KEY ($1) has in .env file $2 (default $ENV_FILE), as compose reads

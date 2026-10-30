@@ -39,7 +39,9 @@ test('no module reads a checked knob from the environment except checked-knobs.m
       if (direct.test(line)) offenders.push(`${relative(REPO, file)}:${i + 1}: ${line.trim()}`);
     });
   }
-  assert.deepEqual(offenders, [], 'read these through checkedKnob / requireCheckedKnob');
+  assert.deepEqual(offenders, [],
+    'read these through checked-knobs.mjs: checkedKnob in the server (boot has validated them), '
+    + 'requireCheckedKnob in code that runs without the boot check (a CLI)');
 });
 
 // The scan must be able to fire: a line that reads a knob directly is caught.

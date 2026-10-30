@@ -48,9 +48,10 @@ test('parsePositiveNumberEnv: a number above 0, fractions included', () => {
   }
 });
 
-test('parsePortEnv: a TCP port 1-65535, else the fallback', () => {
-  assert.equal(parsePortEnv('6335', 6333), 6335);
+test('parsePortEnv: a TCP port 1-65535, else undefined', () => {
+  assert.equal(parsePortEnv('6335'), 6335);
+  assert.equal(parsePortEnv('65535'), 65535);
   for (const raw of [undefined, '', ' ', '6335x', '0', '65536', '63.5']) {
-    assert.equal(parsePortEnv(raw, 6333), 6333, JSON.stringify(raw));
+    assert.equal(parsePortEnv(raw), undefined, JSON.stringify(raw));
   }
 });
