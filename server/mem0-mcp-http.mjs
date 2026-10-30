@@ -77,7 +77,7 @@ import { handleMem0Compat } from './lib/mem0-compat.mjs';
 import { isRecallable } from './lib/recallable.mjs';
 import { errorResponse, httpStatusFor } from './lib/error-envelope.mjs';
 import { createRateLimiter, extractRateLimitKey, isMcpHandshakeMessage, defersChargeToMessage, MCP_HANDSHAKE_BUCKET } from './lib/rate-limit.mjs';
-import { parseIntEnv, parsePortEnv } from './lib/env-number.mjs';
+import { checkedKnob } from './lib/checked-knobs.mjs';
 import { toJsonRpcError } from './lib/jsonrpc-errors.mjs';
 import { getLogger } from './lib/logger.mjs';
 import { resolveHistoryDbPath } from './lib/history-db-path.mjs';
@@ -271,7 +271,7 @@ function requireEnv(name) {
 	return v;
 }
 
-const PORT = parsePortEnv(process.env.MEM0_MCP_PORT, 6335);
+const PORT = checkedKnob('MEM0_MCP_PORT');
 // When run as main, env vars must be set — fail fast. When imported for tests,
 // fall back to harmless defaults so the module loads (tests don't hit initMemory
 // and provide their own memoryClient mocks).
@@ -491,7 +491,7 @@ export async function initMemory() {
 			provider: 'qdrant',
 			config: {
 				host: process.env.QDRANT_HOST || 'localhost',
-				port: parsePortEnv(process.env.QDRANT_PORT, 6333),
+				port: checkedKnob('QDRANT_PORT'),
 				collectionName: process.env.QDRANT_COLLECTION || 'memories',
 			},
 		},
@@ -1593,14 +1593,12 @@ function handleMcpMessage(msg, ctx = {}) {
 	return null;
 }
 
-// Default request-body cap (spec §5.2): 2 MB. Overridable per-process via
-// UM_HTTP_MAX_REQUEST_BYTES — installer seeds the env with this default.
-// Resolved inside readBody() (not at module load) so tests that mutate the
-// env var between `startServer` calls see the new value on each request.
-const DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024;
-
+// Request-body cap (spec §5.2): 2 MB by default (checked-knobs.mjs). Overridable
+// per-process via UM_HTTP_MAX_REQUEST_BYTES — installer seeds the env with the
+// default. Resolved inside readBody() (not at module load) so tests that mutate
+// the env var between `startServer` calls see the new value on each request.
 function _currentMaxBodyBytes() {
-	return parseIntEnv(process.env.UM_HTTP_MAX_REQUEST_BYTES) ?? DEFAULT_MAX_BODY_BYTES;
+	return checkedKnob('UM_HTTP_MAX_REQUEST_BYTES');
 }
 
 /**

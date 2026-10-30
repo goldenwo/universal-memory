@@ -15,6 +15,7 @@ import { validateNumericKnobs } from '../lib/startup-validation.mjs';
 const KNOBS = [
   'UM_RATE_LIMIT_RPM', 'UM_RATE_LIMIT_BURST', 'UM_RATE_LIMIT_MAX_IPS',
   'UM_HTTP_MAX_REQUEST_BYTES', 'MEM0_MCP_PORT', 'QDRANT_PORT',
+  'UM_CAPTURE_LEDGER_RETENTION_DAYS',
 ];
 
 test('validateNumericKnobs: unset and blank knobs pass (the default applies)', () => {
@@ -34,6 +35,7 @@ test('validateNumericKnobs: well-formed knobs pass, a fractional rate included',
     UM_HTTP_MAX_REQUEST_BYTES: '2097152',
     MEM0_MCP_PORT: '6335',
     QDRANT_PORT: '6333',
+    UM_CAPTURE_LEDGER_RETENTION_DAYS: '400',
   }));
 });
 
@@ -50,6 +52,10 @@ test('validateNumericKnobs: a malformed knob throws, naming the variable and the
     ['MEM0_MCP_PORT', '127.0.0.1:6337'],
     ['MEM0_MCP_PORT', '70000'],
     ['QDRANT_PORT', 'abc'],
+    // A delete horizon: '400d' (parseInt read 400) would otherwise prune at 30 days.
+    ['UM_CAPTURE_LEDGER_RETENTION_DAYS', '400d'],
+    ['UM_CAPTURE_LEDGER_RETENTION_DAYS', '1.5'],
+    ['UM_CAPTURE_LEDGER_RETENTION_DAYS', '0'],
   ];
   for (const [name, raw] of cases) {
     assert.throws(
