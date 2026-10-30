@@ -128,7 +128,15 @@ trap _um_cleanup EXIT INT TERM
 # trailing whitespace dropped — so `KEY= # c` is the literal `# c`, as in
 # compose. One rule for every .env reader in this script.
 _um_env_value() {
-	local v="${1%$'\r'}"                       # CRLF-authored .env
+	local _uev_out
+	_um_env_value_into _uev_out "$1"
+	printf '%s' "$_uev_out"
+}
+
+# As _um_env_value, but assigns the result to the variable named $1 instead of
+# printing it: no subshell, for the per-line loop in _um_load_env_file.
+_um_env_value_into() {
+	local v="${2%$'\r'}"                       # CRLF-authored .env
 	v="${v#"${v%%[![:space:]]*}"}"
 	case "$v" in
 		\"*) v="${v#\"}"; v="${v%%\"*}" ;;
@@ -136,7 +144,7 @@ _um_env_value() {
 		*)   v="${v%%[[:space:]]#*}"
 		     v="${v%"${v##*[![:space:]]}"}" ;;
 	esac
-	printf '%s' "$v"
+	printf -v "$1" '%s' "$v"
 }
 
 # The value KEY ($1) has in .env file $2 (default $ENV_FILE), as compose reads
@@ -175,7 +183,7 @@ _um_load_env_file() {
 			warn "Skipping malformed .env line: '$_k' is not a valid variable name"
 			continue
 		fi
-		_v=$(_um_env_value "$_v")
+		_um_env_value_into _v "$_v"
 		# Only export if not already set in the environment, or set by this loop.
 		if [ -z "${!_k+x}" ] || [[ "$_um_loaded" == *" $_k "* ]]; then
 			export "$_k=$_v"
