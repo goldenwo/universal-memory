@@ -12,9 +12,10 @@
 // Usage:
 //   node server/bin/oauth-revoke.mjs --all
 //   node server/bin/oauth-revoke.mjs --client <client_id>
-//   [--port <p>]   default: $MEM0_MCP_PORT or 6335
+//   [--port <p>]   default: $MEM0_MCP_PORT or 6335 (a malformed value of either is an error)
 //
-// Exit codes: 0 success · 1 transport/non-2xx failure · 2 bad arguments.
+// Exit codes: 0 success · 1 transport/non-2xx failure · 2 bad arguments, or a
+// malformed --port / MEM0_MCP_PORT.
 //
 // NUCLEAR OPTION (server stopped): delete `<UM_VAULT_DIR>/oauth-state.json`
 // while the server is down — this kills ALL grants AND the consent-cookie HMAC
@@ -22,9 +23,7 @@
 // operator who cannot reach a running server always sees the fallback.
 
 import http from 'node:http';
-import { fileURLToPath } from 'node:url';
-import { parsePortEnv } from '../lib/env-number.mjs';
-import { requireCheckedKnob } from '../lib/checked-knobs.mjs';
+import { resolveRevokePort } from '../lib/oauth/revoke-port.mjs';
 
 const NUCLEAR_HINT =
   'If the server is not running, stop it and delete <UM_VAULT_DIR>/oauth-state.json ' +
@@ -34,7 +33,7 @@ const USAGE = [
   'Usage:',
   '  oauth-revoke --all                 revoke every grant (tokens + codes)',
   '  oauth-revoke --client <client_id>  revoke one client + its tokens/codes',
-  '  [--port <p>]                       server port (default $MEM0_MCP_PORT or 6335)',
+  '  [--port <p>]                       server port 1-65535 (default $MEM0_MCP_PORT or 6335)',
 ].join('\n');
 
 function fail(code, msg) {
@@ -84,26 +83,6 @@ function formatCounts(counts) {
     `codes: ${counts.codes ?? '?'}`;
 }
 
-/**
- * The port to post to. --port wins, so it also rescues a malformed MEM0_MCP_PORT. Otherwise
- * MEM0_MCP_PORT reads as the server reads it (checked-knobs.mjs): unset or blank is 6335 (a
- * blank one used to reach http.request as '' and post to port 80), and a set-but-malformed
- * one throws, as it refuses server boot — falling back would revoke grants on whatever
- * answers on 6335, or blame the wrong port. A malformed --port throws too.
- */
-export function resolveRevokePort(flag, env = process.env) {
-  if (flag !== undefined) {
-    const port = parsePortEnv(flag);
-    if (port === undefined) throw new Error(`--port must be a TCP port 1-65535, got ${JSON.stringify(flag)}.`);
-    return port;
-  }
-  try {
-    return requireCheckedKnob('MEM0_MCP_PORT', env);
-  } catch (err) {
-    throw new Error(`${err.message}; pass --port <p>.`);
-  }
-}
-
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed.error) fail(2, `${parsed.error}\n\n${USAGE}`);
@@ -143,5 +122,4 @@ async function main() {
   process.exit(0);
 }
 
-// Run only as a command, so the tests can import resolveRevokePort.
-if (process.argv[1] === fileURLToPath(import.meta.url)) main();
+main();

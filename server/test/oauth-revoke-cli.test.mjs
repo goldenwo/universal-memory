@@ -18,7 +18,7 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { resolveRevokePort } from '../bin/oauth-revoke.mjs';
+import { resolveRevokePort } from '../lib/oauth/revoke-port.mjs';
 
 const CLI = fileURLToPath(new URL('../bin/oauth-revoke.mjs', import.meta.url));
 
