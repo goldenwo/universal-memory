@@ -90,11 +90,15 @@ async function main() {
   // 6335 (a blank one used to reach http.request as '' and post to port 80), and a
   // set-but-malformed one fails here as it fails server boot — falling back would revoke
   // grants on whatever answers on 6335, or blame the wrong port.
+  // --port follows the same rule (a blank one also reached port 80).
   const envPort = process.env.MEM0_MCP_PORT;
+  if (parsed.port !== undefined && parsePortEnv(parsed.port) === undefined) {
+    fail(2, `--port must be a TCP port 1-65535, got ${JSON.stringify(parsed.port)}.\n\n${USAGE}`);
+  }
   if (parsed.port === undefined && (envPort ?? '').trim() !== '' && parsePortEnv(envPort) === undefined) {
     fail(2, `MEM0_MCP_PORT must be a TCP port 1-65535, got ${JSON.stringify(envPort)}; pass --port <p>.\n\n${USAGE}`);
   }
-  const port = parsed.port ?? parsePortEnv(envPort, 6335);
+  const port = parsePortEnv(parsed.port) ?? parsePortEnv(envPort, 6335);
   const body = parsed.all ? { all: true } : { client_id: parsed.client };
 
   let res;

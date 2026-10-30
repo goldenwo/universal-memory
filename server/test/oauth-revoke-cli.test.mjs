@@ -116,6 +116,15 @@ test('CLI with a malformed MEM0_MCP_PORT and no --port → exit 2 naming the var
   assert.match(stderr, /MEM0_MCP_PORT must be a TCP port/);
 });
 
+// --port reads by the same rule: a blank one used to reach http.request as '' (port 80).
+test('CLI with a malformed --port → exit 2 naming the flag', async () => {
+  for (const bad of ['', '0', '70000', '6335x']) {
+    const { code, stderr } = await runCli(['--all', '--port', bad]);
+    assert.equal(code, 2, `--port ${JSON.stringify(bad)}: ${stderr}`);
+    assert.match(stderr, /--port must be a TCP port/);
+  }
+});
+
 test('CLI with a well-formed MEM0_MCP_PORT and no --port → posts to that port', async () => {
   const stub = await stubServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
