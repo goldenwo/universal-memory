@@ -18,6 +18,7 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { resolveRevokePort } from '../bin/oauth-revoke.mjs';
 
 const CLI = fileURLToPath(new URL('../bin/oauth-revoke.mjs', import.meta.url));
 
@@ -114,6 +115,20 @@ test('CLI with a malformed MEM0_MCP_PORT and no --port → exit 2 naming the var
   const { code, stderr } = await runCli(['--all'], { MEM0_MCP_PORT: '127.0.0.1:6337' });
   assert.equal(code, 2, stderr);
   assert.match(stderr, /MEM0_MCP_PORT must be a TCP port/);
+});
+
+// The port resolution, as a table: --port wins (and rescues a malformed env), a blank or
+// unset env is 6335 (never '' → port 80), and a malformed flag or env throws.
+test('resolveRevokePort: flag beats env, blank env is 6335, malformed throws', () => {
+  assert.equal(resolveRevokePort(undefined, {}), 6335);
+  assert.equal(resolveRevokePort(undefined, { MEM0_MCP_PORT: ' ' }), 6335);
+  assert.equal(resolveRevokePort(undefined, { MEM0_MCP_PORT: '6340' }), 6340);
+  assert.equal(resolveRevokePort('6341', { MEM0_MCP_PORT: '6340' }), 6341);
+  assert.equal(resolveRevokePort('6341', { MEM0_MCP_PORT: '127.0.0.1:6337' }), 6341);
+  assert.throws(() => resolveRevokePort(undefined, { MEM0_MCP_PORT: '127.0.0.1:6337' }), /MEM0_MCP_PORT must be/);
+  for (const bad of ['', ' ', '0', '70000', '6335x']) {
+    assert.throws(() => resolveRevokePort(bad, {}), /--port must be/, JSON.stringify(bad));
+  }
 });
 
 // --port reads by the same rule: a blank one used to reach http.request as '' (port 80).

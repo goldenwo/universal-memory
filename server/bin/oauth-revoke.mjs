@@ -22,7 +22,9 @@
 // operator who cannot reach a running server always sees the fallback.
 
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { parsePortEnv } from '../lib/env-number.mjs';
+import { requireCheckedKnob } from '../lib/checked-knobs.mjs';
 
 const NUCLEAR_HINT =
   'If the server is not running, stop it and delete <UM_VAULT_DIR>/oauth-state.json ' +
@@ -82,23 +84,36 @@ function formatCounts(counts) {
     `codes: ${counts.codes ?? '?'}`;
 }
 
+/**
+ * The port to post to. --port wins, so it also rescues a malformed MEM0_MCP_PORT. Otherwise
+ * MEM0_MCP_PORT reads as the server reads it (checked-knobs.mjs): unset or blank is 6335 (a
+ * blank one used to reach http.request as '' and post to port 80), and a set-but-malformed
+ * one throws, as it refuses server boot — falling back would revoke grants on whatever
+ * answers on 6335, or blame the wrong port. A malformed --port throws too.
+ */
+export function resolveRevokePort(flag, env = process.env) {
+  if (flag !== undefined) {
+    const port = parsePortEnv(flag);
+    if (port === undefined) throw new Error(`--port must be a TCP port 1-65535, got ${JSON.stringify(flag)}.`);
+    return port;
+  }
+  try {
+    return requireCheckedKnob('MEM0_MCP_PORT', env);
+  } catch (err) {
+    throw new Error(`${err.message}; pass --port <p>.`);
+  }
+}
+
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed.error) fail(2, `${parsed.error}\n\n${USAGE}`);
 
-  // The env port reads as the server reads it (mem0-mcp-http.mjs PORT): unset or blank is
-  // 6335 (a blank one used to reach http.request as '' and post to port 80), and a
-  // set-but-malformed one fails here as it fails server boot — falling back would revoke
-  // grants on whatever answers on 6335, or blame the wrong port.
-  // --port follows the same rule (a blank one also reached port 80).
-  const envPort = process.env.MEM0_MCP_PORT;
-  if (parsed.port !== undefined && parsePortEnv(parsed.port) === undefined) {
-    fail(2, `--port must be a TCP port 1-65535, got ${JSON.stringify(parsed.port)}.\n\n${USAGE}`);
+  let port;
+  try {
+    port = resolveRevokePort(parsed.port);
+  } catch (err) {
+    fail(2, `${err.message}\n\n${USAGE}`);
   }
-  if (parsed.port === undefined && (envPort ?? '').trim() !== '' && parsePortEnv(envPort) === undefined) {
-    fail(2, `MEM0_MCP_PORT must be a TCP port 1-65535, got ${JSON.stringify(envPort)}; pass --port <p>.\n\n${USAGE}`);
-  }
-  const port = parsePortEnv(parsed.port) ?? parsePortEnv(envPort, 6335);
   const body = parsed.all ? { all: true } : { client_id: parsed.client };
 
   let res;
@@ -128,4 +143,5 @@ async function main() {
   process.exit(0);
 }
 
-main();
+// Run only as a command, so the tests can import resolveRevokePort.
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();
