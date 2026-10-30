@@ -276,6 +276,45 @@ T3_TOKEN_FILE=$(cat "$T3_HOME/.um/auth-token" 2>/dev/null || echo "")
 assert_eq "T3: seeded token preserved in .env"            "$T3_TOKEN_ENV"  "$SEEDED_TOKEN"
 assert_eq "T3: seeded token mirrored to ~/.um/auth-token" "$T3_TOKEN_FILE" "$SEEDED_TOKEN"
 
+# ─── T3b: the reused token is read as compose reads it ───────────────────────
+# A token rotated by appending a line, quoted, with an inline comment: compose
+# (and so the server) uses the LAST line's bare value. Reusing the first line, or
+# keeping the quote and comment, would change the bearer token every client holds.
+echo ""
+echo "=== T3b: reused UM_AUTH_TOKEN is the last line's bare value ==="
+T3B="$TMPROOT/t3b"
+T3B_HOME="$T3B/home"
+T3B_STAGE="$T3B/stage"
+mkdir -p "$T3B_HOME/vault" "$T3B_HOME/plugins"
+touch "$T3B_HOME/.bashrc"
+make_fakebin "$T3B/bin"
+stage_install_dir "$T3B_STAGE"
+T3B_ENV_FILE="$T3B_STAGE/server/.env"
+T3B_OLD="old0$(printf '%060d' 0)"
+T3B_NEW="new1$(printf '%060d' 0 | tr '0' 'b')"
+cat > "$T3B_ENV_FILE" <<EOF
+OPENAI_API_KEY=sk-old-key-0000
+MEM0_USER_ID=b4testuser
+MEM0_MCP_PORT=6335
+UM_VAULT_DIR=$T3B_HOME/vault
+UM_SUMMARY_ENABLED=true
+UM_TEMPORAL_DECAY=false
+UM_AUTH_TOKEN=$T3B_OLD
+UM_AUTH_TOKEN= "$T3B_NEW" # rotated
+EOF
+
+T3B_EXIT=0
+T3B_OUT=$(run_token_install "$T3B/bin" "$T3B_HOME" "$T3B_STAGE") || T3B_EXIT=$?
+if [ "$T3B_EXIT" -ne 0 ]; then
+  fail_test "T3b: install exits 0" "exit $T3B_EXIT; tail: $(printf '%s\n' "$T3B_OUT" | tail -30)"
+else
+  pass "T3b: install exits 0"
+fi
+T3B_TOKEN_ENV=$(grep -E '^UM_AUTH_TOKEN=' "$T3B_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+T3B_TOKEN_FILE=$(cat "$T3B_HOME/.um/auth-token" 2>/dev/null || echo "")
+assert_eq "T3b: last, bare token kept in .env"            "$T3B_TOKEN_ENV"  "$T3B_NEW"
+assert_eq "T3b: last, bare token mirrored to auth-token"  "$T3B_TOKEN_FILE" "$T3B_NEW"
+
 # ─── T4: fresh install lands all 13 v0.6 keys in .env (Part B) ───────────────
 # Reuses T1's end-state .env (the fresh install in T1).
 echo ""

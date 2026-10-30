@@ -140,13 +140,16 @@ _um_env_value() {
 }
 
 # The value KEY ($1) has in .env file $2 (default $ENV_FILE), as compose reads
-# it: the LAST line for the key wins (compose takes the last occurrence of a
-# duplicated key), normalized by _um_env_value. Prints nothing when the file or
-# the key is absent. Always returns 0, so `$(...)` under `set -e` is safe.
+# it: the key may be indented, prefixed with `export`, or followed by spaces
+# before the `=`; the LAST line for the key wins (compose takes the last
+# occurrence of a duplicated key); the value is normalized by _um_env_value.
+# Prints nothing when the file or the key is absent. Always returns 0, so
+# `$(...)` under `set -e` is safe.
 _um_env_file_value() {
 	local _f="${2:-$ENV_FILE}" _raw=""
 	[ -f "$_f" ] || return 0
-	_raw=$(grep -E "^$1=" "$_f" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+	_raw=$(grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$_f" 2>/dev/null \
+		| tail -1 | cut -d= -f2- || true)
 	_um_env_value "$_raw"
 }
 
@@ -159,8 +162,13 @@ _um_load_env_file() {
 	[ -f "$ENV_FILE" ] || return 0
 	local _um_loaded=' '
 	while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+		# Key syntax compose accepts: leading whitespace, an `export ` prefix, and
+		# whitespace before the `=` (`KEY = v`) are not part of the name.
+		_k="${_k#"${_k%%[![:space:]]*}"}"
+		[[ "$_k" =~ ^export[[:space:]]+(.*)$ ]] && _k="${BASH_REMATCH[1]}"
+		_k="${_k%"${_k##*[![:space:]]}"}"
 		# Skip comments and blank lines
-		[[ "$_k" =~ ^[[:space:]]*# ]] && continue
+		[[ "$_k" =~ ^# ]] && continue
 		[ -z "$_k" ] && continue
 		# C2: Validate key is a valid shell identifier; skip malformed lines with a warning.
 		if ! [[ "$_k" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
@@ -1107,16 +1115,12 @@ fi
 # "is a token already available" test below to decide whether openssl is a
 # prerequisite; change them together.
 if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
-	# `|| true` is mandatory: when .env exists but lacks UM_AUTH_TOKEN= (the
-	# v0.5 → v0.6 upgrade case), grep returns 1 and under `set -euo pipefail`
-	# the whole assignment aborts the script. `|| true` swallows the grep miss
-	# and leaves _UM_AT_EXISTING empty, letting the generation branch handle
-	# the fresh-token path downstream.
-	_UM_AT_EXISTING=$(grep -E '^UM_AUTH_TOKEN=' "$ENV_FILE" 2>/dev/null \
-		| head -1 \
-		| cut -d= -f2- \
-		| sed 's/^"//;s/"$//;s/^'"'"'//;s/'"'"'$//' \
-		|| true)
+	# Read as compose (and so the server) reads it: the last line's bare value.
+	# Reusing the first line of a token rotated by appending one, or keeping
+	# its quotes and inline comment, would change the bearer token every client
+	# holds. Empty when .env lacks the key (the v0.5 → v0.6 upgrade case), which
+	# lets the generation branch handle the fresh-token path downstream.
+	_UM_AT_EXISTING=$(_um_env_file_value UM_AUTH_TOKEN)
 	if [ -n "$_UM_AT_EXISTING" ]; then
 		UM_AUTH_TOKEN="$_UM_AT_EXISTING"
 		info "Reusing existing UM_AUTH_TOKEN from .env."
