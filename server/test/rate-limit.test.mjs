@@ -99,9 +99,10 @@ function withRateEnv(vars, fn) {
   }
 }
 
-// The knobs read like every numeric env knob (lib/env-number.mjs). parseInt read a blank or
-// junk value as NaN, and a NaN rpm or burst makes every token count NaN, which is never < 1:
-// the limiter admitted everything.
+// The limiter's knobs are checked knobs (lib/checked-knobs.mjs): boot refuses a malformed
+// value, and a limiter built without that check (as here) still never sees NaN. parseInt
+// read a blank or junk value as NaN, and a NaN rpm or burst makes every token count NaN,
+// which is never < 1: the limiter admitted everything.
 test('env override: a blank or malformed UM_RATE_LIMIT_RPM / _BURST falls back to the default, never NaN', () => {
   withRateEnv({ UM_RATE_LIMIT_RPM: 'abc', UM_RATE_LIMIT_BURST: ' ' }, () => {
     const admit = createRateLimiter();
@@ -130,7 +131,8 @@ test('env override: UM_RATE_LIMIT_RPM accepts a fractional rate', () => {
 });
 
 // '2x' was read as 2, so eviction began at 1 entry and a drained IP got a fresh bucket as
-// soon as another IP arrived. The default cap (10000) keeps both.
+// soon as another IP arrived. Boot refuses '2x' now (checked-knobs.mjs); a limiter built
+// without that check falls back to the default cap (10000), which keeps both.
 test('env override: UM_RATE_LIMIT_MAX_IPS takes no numeric prefix', () => {
   withRateEnv({ UM_RATE_LIMIT_MAX_IPS: '2x', UM_RATE_LIMIT_BURST: '1' }, () => {
     const admit = createRateLimiter();

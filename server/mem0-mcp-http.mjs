@@ -271,13 +271,12 @@ function requireEnv(name) {
 	return v;
 }
 
-const PORT = checkedKnob('MEM0_MCP_PORT');
 // When run as main, env vars must be set — fail fast. When imported for tests,
 // fall back to harmless defaults so the module loads (tests don't hit initMemory
 // and provide their own memoryClient mocks).
 const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
 if (IS_MAIN) {
-  // A set-but-malformed rate-limit, body-cap or port knob refuses boot (#321's rule): its
+  // A set-but-malformed checked knob (lib/checked-knobs.mjs) refuses boot (#321's rule): its
   // reader would silently fall back to the default.
   try {
     validateNumericKnobs(process.env);
@@ -349,6 +348,9 @@ if (IS_MAIN) {
     process.exit(1);
   }
 }
+
+// Read after the boot validation above, so a malformed value has already refused boot.
+const PORT = checkedKnob('MEM0_MCP_PORT');
 
 let memory;
 

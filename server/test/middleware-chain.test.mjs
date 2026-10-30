@@ -222,8 +222,9 @@ test('B.6b: request body over UM_HTTP_MAX_REQUEST_BYTES → 413 INPUT_TOO_LARGE'
   } finally { await close(); }
 });
 
-// The cap reads like every numeric env knob (lib/env-number.mjs): '1024x' was read as 1024,
-// a cap the operator never set; a malformed value is no override, so the 2 MB default holds.
+// The cap is a checked knob (lib/checked-knobs.mjs): '1024x' was read as 1024, a cap the
+// operator never set. Boot refuses it now; a handler built without that check (as here)
+// falls back to the 2 MB default instead of a numeric prefix.
 test('B.6b: a malformed UM_HTTP_MAX_REQUEST_BYTES falls back to the 2 MB default', async () => {
   const { close, url } = await startServerWithCap({
     capBytes: '1024x',

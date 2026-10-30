@@ -1,10 +1,10 @@
 // server/test/startup-validation-numeric-knobs.test.mjs — boot refusal for a malformed
-// protection knob (validateNumericKnobs).
+// checked knob (validateNumericKnobs over lib/checked-knobs.mjs).
 //
-// The rate limiter, the request-body cap and the two ports read a malformed value as no
-// override (lib/env-number.mjs). For these knobs that fallback is silent loosening, so a
-// set-but-malformed value refuses boot instead — the #321 rule UM_OAUTH_CONSENT_TTL_HOURS
-// already follows. Unset or blank stays the default, with no refusal.
+// For the checked knobs a fallback to the default would silently loosen a protection, move a
+// port or delete data, so a set-but-malformed value refuses boot instead — the #321 rule
+// UM_OAUTH_CONSENT_TTL_HOURS already follows. Unset or blank stays the default, with no
+// refusal. The table-wide parse contract is pinned in checked-knobs.test.mjs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
