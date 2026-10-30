@@ -1559,6 +1559,32 @@ assert_not_contains "T28b: no quote leaked into the URL" "$T28B_OUT" 'localhost:
 assert_contains "T28b: quoted vault path after a space found" "$T28B_OUT" "vault-dir"
 assert_not_contains "T28b: no quote leaked into the vault path" "$T28B_OUT" " \"$T28B/vault"
 
+# T28c: an unquoted value after leading whitespace. Compose trims it
+# (`MEM0_MCP_PORT= 6335` publishes 6335), so the loader must too.
+echo ""
+echo "=== T28c: --verify tolerates leading whitespace before an unquoted value ==="
+T28C="$TMPROOT/t28c"
+mkdir -p "$T28C/vault" "$T28C/plugins" "$T28C/home"
+make_fakebin "$T28C/bin" 200
+T28C_SH=$(make_isolated_server "$T28C/server")
+mkdir -p "$T28C/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T28C/plugins/cache/universal-memory/universal-memory/1.8.1"
+{
+  printf 'MEM0_MCP_PORT= 6335\n'
+  printf 'UM_VAULT_DIR=\t%s\n' "$T28C/vault"
+  printf "UM_OPENAI_API_KEY=sk-testkey12345\n"
+} > "$T28C/server/.env"
+
+T28C_EXIT=0
+T28C_OUT=$(env PATH="$T28C/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  CLAUDE_PLUGINS_DIR="$T28C/plugins" \
+  HOME="$T28C/home" \
+  bash "$T28C_SH" --verify 2>&1) || T28C_EXIT=$?
+
+assert_exit_zero "T28c: --verify exits 0 with leading whitespace" "$T28C_EXIT"
+assert_contains "T28c: port trimmed in health URL" "$T28C_OUT" "http://localhost:6335/health"
+assert_contains "T28c: vault path trimmed" "$T28C_OUT" "vault-dir"
+
 # ─── T32: --upgrade refreshes the um CLI after a healthy server upgrade ──────
 # The CLI is a copy of the repo's scripts with no self-update path, so it stays
 # at whatever version was installed until someone re-runs the installer. That
@@ -2027,6 +2053,24 @@ else
   pass "TQ5: IPv6 loopback is silent"
 fi
 
+# TQ6: a duplicated key. Compose takes the LAST line, so a loopback line followed
+# by 0.0.0.0 publishes Qdrant on every interface; the warning must see the same.
+echo ""
+echo "=== TQ6: --verify with a duplicated UM_QDRANT_PORT reads the last line, as compose does ==="
+TQ6="$TMPROOT/tq6"
+mkdir -p "$TQ6/vault" "$TQ6/plugins" "$TQ6/home"
+touch "$TQ6/home/.bashrc"
+make_fakebin "$TQ6/bin" 200
+TQ6_SH=$(make_isolated_server "$TQ6/server")
+mkdir -p "$TQ6/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$TQ6/plugins/cache/universal-memory/universal-memory/1.8.1"
+printf 'UM_QDRANT_PORT=127.0.0.1:6336\nUM_QDRANT_PORT=0.0.0.0:6336\n' > "$TQ6/server/.env"
+TQ6_EXIT=0
+TQ6_OUT=$(env PATH="$TQ6/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$TQ6/vault" UM_OPENAI_API_KEY=sk-testkey12345 CLAUDE_PLUGINS_DIR="$TQ6/plugins" \
+  HOME="$TQ6/home" bash "$TQ6_SH" --verify 2>&1) || TQ6_EXIT=$?
+assert_exit_zero "TQ6: --verify still exits 0 (advisory)" "$TQ6_EXIT"
+assert_contains "TQ6: warns on the last line's value" "$TQ6_OUT" "UM_QDRANT_PORT=0.0.0.0:6336 publishes Qdrant on every interface"
+
 # ─── TVC: --verify finds a marketplace-installed plugin ──────────────────────
 # The README installs the plugin with `claude plugin install`, which puts it in
 # ~/.claude/plugins/cache/universal-memory/universal-memory/<version>/. --verify
@@ -2149,6 +2193,21 @@ for case in "tcap3:ro:false:rw:true" "tcap4:rw:true:ro:false"; do
   assert_eq "TCAP $name (export beats .env): UM_MOUNT_MODE" "$(grep -E '^UM_MOUNT_MODE=' "$T/server/.env" | tail -1)" "UM_MOUNT_MODE=$want_m"
   assert_eq "TCAP $name (export beats .env): UM_MCP_WRITE_ENABLED" "$(grep -E '^UM_MCP_WRITE_ENABLED=' "$T/server/.env" | tail -1)" "UM_MCP_WRITE_ENABLED=$want_w"
 done
+# TCAP5: the kept switches and container user are read the way compose reads them:
+# a quoted value or an inline comment (both fine under compose) must not abort the
+# re-run's validation or leak into the rewritten .env.
+T="$TMPROOT/tcap5"
+mkdir -p "$T/vault" "$T/plugins" "$T/home"; touch "$T/home/.bashrc"
+make_fakebin "$T/bin" 200; make_isolated_server "$T/server" >/dev/null
+printf 'MEM0_USER_ID=testuser\nUM_MOUNT_MODE=rw # capture on\nUM_MCP_WRITE_ENABLED="true"\nUM_CONTAINER_USER="1001:1001"\n' > "$T/server/.env"
+run_install "$T/bin" "$T/server/install.sh" \
+  UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 UM_SUMMARY_ENABLED=true \
+  UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$T/plugins" UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash HOME="$T/home" >/dev/null || true
+assert_eq "TCAP tcap5 (quoted/commented): UM_MOUNT_MODE" "$(grep -E '^UM_MOUNT_MODE=' "$T/server/.env" | tail -1)" "UM_MOUNT_MODE=rw"
+assert_eq "TCAP tcap5 (quoted/commented): UM_MCP_WRITE_ENABLED" "$(grep -E '^UM_MCP_WRITE_ENABLED=' "$T/server/.env" | tail -1)" "UM_MCP_WRITE_ENABLED=true"
+assert_eq "TCAP tcap5 (quoted/commented): UM_CONTAINER_USER" "$(grep -E '^UM_CONTAINER_USER=' "$T/server/.env" | tail -1)" "UM_CONTAINER_USER=1001:1001"
 # ─── TTXT: a first-time interactive install asks only what a reader can answer ─
 # The 2026-10-14 clean-room install was asked "Enable session-summary pipeline
 # (true/false)", "Enable temporal decay weighting (true/false)" and a second

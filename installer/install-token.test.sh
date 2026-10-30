@@ -337,6 +337,10 @@ UM_UPSTREAM_RETRY_MAX=5 # hand-tuned
 UM_LOCK_LOW_DISK_THRESHOLD='52428800'
 UM_BRIDGE_JITTER_SEC=20" # what an earlier installer wrote back from "20" # tuned
 UM_RATE_LIMIT_MAX_IPS= "5000"
+UM_OPENAPI_AUTH_REQUIRED=   false
+UM_METRICS_AUTH_REQUIRED= # no value, only a comment
+UM_METRICS_LOOPBACK_ONLY=true
+UM_METRICS_LOOPBACK_ONLY=false
 EOF
 
 T5_EXIT=0
@@ -370,6 +374,16 @@ assert_eq "T5: stray trailing quote from an earlier installer dropped"    "$T5_J
 # stray-quote drop turns ` "5000"` into ` "5000` and compose rejects the file.
 T5_MAXIPS=$(grep -E '^UM_RATE_LIMIT_MAX_IPS=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
 assert_eq "T5: quoted value after leading whitespace preserved bare"      "$T5_MAXIPS" "5000"
+# Compose trims whitespace before any value, quoted or not.
+T5_OPENAPI=$(grep -E '^UM_OPENAPI_AUTH_REQUIRED=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: unquoted value after leading whitespace preserved bare"    "$T5_OPENAPI" "false"
+# `KEY= # c` is the literal '# c' to compose; no v0.6 knob can hold that, so the
+# re-run falls back to the default instead of writing it back.
+T5_MAUTH=$(grep -E '^UM_METRICS_AUTH_REQUIRED=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: a comment-only value falls back to the default"            "$T5_MAUTH" "true"
+# A duplicated key: compose takes the LAST line, so the re-run keeps that one.
+T5_MLOOP=$(grep -E '^UM_METRICS_LOOPBACK_ONLY=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
+assert_eq "T5: duplicated key keeps the last line, as compose does"       "$T5_MLOOP" "false"
 
 # Missing keys must land at safe defaults
 T5_BURST=$(grep -E '^UM_RATE_LIMIT_BURST=' "$T5_ENV_FILE" | head -1 | cut -d= -f2-)
