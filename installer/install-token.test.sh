@@ -136,12 +136,13 @@ stage_install_dir() {
   cp "$REPO_ROOT/installer/lib/marker-block.sh" "$stage/installer/lib/marker-block.sh"
 }
 
-# run_token_install <fakebin> <home> <stage>
+# run_token_install <fakebin> <home> <stage> [VAR=value ...]
 #   Invoke installer/install.sh with --server --yes against an isolated
 #   stage. UM_NONINTERACTIVE=1 + key vars in env drive the non-interactive
-#   path. Key validation is skipped to keep the test offline.
+#   path. Key validation is skipped to keep the test offline. Extra
+#   VAR=value arguments are added to (or override) that environment.
 run_token_install() {
-  local fakebin="$1" home="$2" stage="$3"
+  local fakebin="$1" home="$2" stage="$3"; shift 3
   env \
     PATH="$fakebin:$PATH" \
     HOME="$home" \
@@ -158,6 +159,7 @@ run_token_install() {
     UM_SKIP_DOCKER=1 \
     CLAUDE_PLUGINS_DIR="$home/plugins" \
     SHELL=/bin/bash \
+    "$@" \
     bash "$stage/installer/install.sh" --server --yes 2>&1
 }
 
@@ -314,6 +316,78 @@ T3B_TOKEN_ENV=$(grep -E '^UM_AUTH_TOKEN=' "$T3B_ENV_FILE" 2>/dev/null | tail -1 
 T3B_TOKEN_FILE=$(cat "$T3B_HOME/.um/auth-token" 2>/dev/null || echo "")
 assert_eq "T3b: last, bare token kept in .env"            "$T3B_TOKEN_ENV"  "$T3B_NEW"
 assert_eq "T3b: last, bare token mirrored to auth-token"  "$T3B_TOKEN_FILE" "$T3B_NEW"
+
+# ─── T3c: the .env token wins over a differing shell export (#400) ───────────
+# The installer's marker block exports UM_AUTH_TOKEN from ~/.um/auth-token in
+# every login shell, so a shell opened before a rotation still holds the old
+# token. A re-run from it used to write that token back to .env and the mirror
+# and recreate the server: the rotated-away token worked again, and clients
+# holding the new one got 401. server/.env is the server's source of truth, so
+# a differing export is reported and not used (operator ruling, #400).
+echo ""
+echo "=== T3c: .env token wins over a stale UM_AUTH_TOKEN export ==="
+T3C="$TMPROOT/t3c"
+T3C_HOME="$T3C/home"
+T3C_STAGE="$T3C/stage"
+mkdir -p "$T3C_HOME/vault" "$T3C_HOME/plugins" "$T3C_HOME/.um"
+touch "$T3C_HOME/.bashrc"
+make_fakebin "$T3C/bin"
+stage_install_dir "$T3C_STAGE"
+T3C_ENV_FILE="$T3C_STAGE/server/.env"
+T3C_OLD="0ld0$(printf '%060d' 0)"
+T3C_NEW="rot1$(printf '%060d' 0 | tr '0' 'c')"
+cat > "$T3C_ENV_FILE" <<EOF
+OPENAI_API_KEY=sk-old-key-0000
+MEM0_USER_ID=b4testuser
+MEM0_MCP_PORT=6335
+UM_VAULT_DIR=$T3C_HOME/vault
+UM_AUTH_TOKEN=$T3C_NEW
+EOF
+printf '%s\n' "$T3C_NEW" > "$T3C_HOME/.um/auth-token"
+
+T3C_EXIT=0
+T3C_OUT=$(run_token_install "$T3C/bin" "$T3C_HOME" "$T3C_STAGE" UM_AUTH_TOKEN="$T3C_OLD") || T3C_EXIT=$?
+assert_exit_zero_or_tail() { if [ "$1" -eq 0 ]; then pass "$2"; else fail_test "$2" "exit $1; tail: $(printf '%s\n' "$3" | tail -30)"; fi; }
+assert_exit_zero_or_tail "$T3C_EXIT" "T3c: install exits 0" "$T3C_OUT"
+assert_eq "T3c: the .env token stays in .env" \
+  "$(grep -E '^UM_AUTH_TOKEN=' "$T3C_ENV_FILE" | tail -1 | cut -d= -f2-)" "$T3C_NEW"
+assert_eq "T3c: the mirror keeps the .env token" "$(cat "$T3C_HOME/.um/auth-token")" "$T3C_NEW"
+if printf '%s\n' "$T3C_OUT" | grep -q "UM_AUTH_TOKEN in this shell differs from"; then
+  pass "T3c: the differing export is reported"
+else
+  fail_test "T3c: the differing export is reported" "output: $(printf '%s\n' "$T3C_OUT" | grep -i token)"
+fi
+if printf '%s\n' "$T3C_OUT" | grep -qF "$T3C_OLD"; then
+  fail_test "T3c: the report does not print a token" "output carries the exported token"
+else
+  pass "T3c: the report does not print a token"
+fi
+
+# An export is still the token when .env has none: that is how a pre-generated
+# token reaches a first install, or a v0.5 .env that predates bearer auth.
+echo ""
+echo "=== T3d: an exported token is used when .env has none ==="
+T3D="$TMPROOT/t3d"
+T3D_HOME="$T3D/home"
+T3D_STAGE="$T3D/stage"
+mkdir -p "$T3D_HOME/vault" "$T3D_HOME/plugins"
+touch "$T3D_HOME/.bashrc"
+make_fakebin "$T3D/bin"
+stage_install_dir "$T3D_STAGE"
+T3D_ENV_FILE="$T3D_STAGE/server/.env"
+T3D_TOKEN="pre9$(printf '%060d' 0 | tr '0' 'd')"
+cat > "$T3D_ENV_FILE" <<EOF
+OPENAI_API_KEY=sk-old-key-0000
+MEM0_USER_ID=b4testuser
+MEM0_MCP_PORT=6335
+UM_VAULT_DIR=$T3D_HOME/vault
+EOF
+T3D_EXIT=0
+T3D_OUT=$(run_token_install "$T3D/bin" "$T3D_HOME" "$T3D_STAGE" UM_AUTH_TOKEN="$T3D_TOKEN") || T3D_EXIT=$?
+assert_exit_zero_or_tail "$T3D_EXIT" "T3d: install exits 0" "$T3D_OUT"
+assert_eq "T3d: the exported token is written to .env" \
+  "$(grep -E '^UM_AUTH_TOKEN=' "$T3D_ENV_FILE" | tail -1 | cut -d= -f2-)" "$T3D_TOKEN"
+assert_eq "T3d: and mirrored" "$(cat "$T3D_HOME/.um/auth-token")" "$T3D_TOKEN"
 
 # ─── T4: fresh install lands all 13 v0.6 keys in .env (Part B) ───────────────
 # Reuses T1's end-state .env (the fresh install in T1).
@@ -534,6 +608,102 @@ if printf '%s\n' "$T6C_OUT" | grep -q 'v0.5 → v0.6 changes applied'; then
   fail_test "T6c: UM_QUIET=1 suppresses delta summary" "saw banner despite UM_QUIET=1"
 else
   pass "T6c: UM_QUIET=1 suppresses delta summary"
+fi
+
+# ─── T5c: the repair also covers a stray quote right before a comment ────────
+# `KEY="20"# tuned` re-emitted by an earlier installer came back as `20"# tuned`.
+# With no space before the #, compose reads that whole string, and the server
+# refuses it at boot; the reader drops everything from the stray quote on.
+echo ""
+echo "=== T5c: stray quote before an unspaced comment is repaired (#400) ==="
+T5C="$TMPROOT/t5c"
+T5C_HOME="$T5C/home"
+T5C_STAGE="$T5C/stage"
+mkdir -p "$T5C_HOME/vault" "$T5C_HOME/plugins"
+touch "$T5C_HOME/.bashrc"
+make_fakebin "$T5C/bin"
+stage_install_dir "$T5C_STAGE"
+T5C_ENV_FILE="$T5C_STAGE/server/.env"
+cat > "$T5C_ENV_FILE" <<EOF
+OPENAI_API_KEY=sk-old-key
+MEM0_USER_ID=b5user
+MEM0_MCP_PORT=6335
+UM_VAULT_DIR=$T5C_HOME/vault
+UM_RATE_LIMIT_BURST=20"# tuned
+UM_RATE_LIMIT_MAX_IPS=5000'#x
+EOF
+T5C_EXIT=0
+T5C_OUT=$(run_token_install "$T5C/bin" "$T5C_HOME" "$T5C_STAGE") || T5C_EXIT=$?
+assert_exit_zero_or_tail "$T5C_EXIT" "T5c: re-run exits 0" "$T5C_OUT"
+assert_eq "T5c: double quote before an unspaced comment repaired" \
+  "$(grep -E '^UM_RATE_LIMIT_BURST=' "$T5C_ENV_FILE" | tail -1 | cut -d= -f2-)" "20"
+assert_eq "T5c: single quote before an unspaced comment repaired" \
+  "$(grep -E '^UM_RATE_LIMIT_MAX_IPS=' "$T5C_ENV_FILE" | tail -1 | cut -d= -f2-)" "5000"
+
+# ─── T7: a re-run keeps every key the installer does not manage (#400) ───────
+# The writer rewrites a fixed list of keys plus the v0.6 block, and anything
+# else in .env used to be dropped: the Pi's UM_CAPTURE_LEDGER_RETENTION_DAYS=400
+# silently reverted to the 30-day prune, and a pinned UM_VERSION vanished. Such
+# keys are carried over from the backup as their last line, verbatim, so compose
+# reads the same value (operator ruling, #400). Comments are not carried, and a
+# key the installer writes itself is never written twice.
+echo ""
+echo "=== T7: unmanaged keys survive a re-run, verbatim and once ==="
+T7="$TMPROOT/t7"
+T7_HOME="$T7/home"
+T7_STAGE="$T7/stage"
+mkdir -p "$T7_HOME/vault" "$T7_HOME/plugins"
+touch "$T7_HOME/.bashrc"
+make_fakebin "$T7/bin"
+stage_install_dir "$T7_STAGE"
+T7_ENV_FILE="$T7_STAGE/server/.env"
+cat > "$T7_ENV_FILE" <<EOF
+# a hand-written comment
+OPENAI_API_KEY=sk-old-key
+MEM0_USER_ID=old-user
+MEM0_MCP_PORT=6335
+UM_VAULT_DIR=$T7_HOME/vault
+UM_CAPTURE_LEDGER_RETENTION_DAYS=400
+UM_VERSION=1.30.0
+UM_NOTE="a # b"
+UM_DUP=1
+UM_DUP=2
+  export UM_EXPORTED = 3
+UM_EMPTY=
+UM_RATE_LIMIT_RPM=90
+EOF
+T7_EXIT=0
+T7_OUT=$(run_token_install "$T7/bin" "$T7_HOME" "$T7_STAGE") || T7_EXIT=$?
+assert_exit_zero_or_tail "$T7_EXIT" "T7: re-run exits 0" "$T7_OUT"
+T7_BODY=$(cat "$T7_ENV_FILE")
+for _line in 'UM_CAPTURE_LEDGER_RETENTION_DAYS=400' 'UM_VERSION=1.30.0' 'UM_NOTE="a # b"' \
+  'UM_DUP=2' '  export UM_EXPORTED = 3' 'UM_EMPTY='; do
+  assert_eq "T7: kept verbatim, once: $_line" "$(grep -cxF -- "$_line" "$T7_ENV_FILE")" "1"
+done
+assert_eq "T7: a duplicated key keeps only its last line" "$(grep -cE '^UM_DUP=' "$T7_ENV_FILE")" "1"
+assert_eq "T7: a v0.6 key is written once, with its value" \
+  "$(grep -E '^UM_RATE_LIMIT_RPM=' "$T7_ENV_FILE")" "UM_RATE_LIMIT_RPM=90"
+assert_eq "T7: a key the writer manages is written once" "$(grep -cE '^MEM0_USER_ID=' "$T7_ENV_FILE")" "1"
+if printf '%s\n' "$T7_BODY" | grep -qF '# a hand-written comment'; then
+  fail_test "T7: comments are not carried" "found the seeded comment"
+else
+  pass "T7: comments are not carried"
+fi
+if printf '%s\n' "$T7_OUT" | grep -q 'kept 6 settings'; then
+  pass "T7: the kept keys are reported"
+else
+  fail_test "T7: the kept keys are reported" "output: $(printf '%s\n' "$T7_OUT" | grep -i 'kept\|preserv')"
+fi
+T7_FIRST=$(grep -v '^# Generated by install.sh on ' "$T7_ENV_FILE")
+T7B_EXIT=0
+T7B_OUT=$(run_token_install "$T7/bin" "$T7_HOME" "$T7_STAGE") || T7B_EXIT=$?
+assert_exit_zero_or_tail "$T7B_EXIT" "T7: second re-run exits 0" "$T7B_OUT"
+T7_SECOND=$(grep -v '^# Generated by install.sh on ' "$T7_ENV_FILE")
+if [ "$T7_FIRST" = "$T7_SECOND" ]; then
+  pass "T7: .env body byte-identical after a second re-run"
+else
+  fail_test "T7: .env body byte-identical after a second re-run" \
+    "diff: $(diff <(printf '%s\n' "$T7_FIRST") <(printf '%s\n' "$T7_SECOND") | head -20)"
 fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

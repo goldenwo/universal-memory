@@ -146,7 +146,9 @@ docker compose restart   # or: systemctl --user restart um-server
 ```
 
 After restart, **re-source your shell rc** (`source ~/.bashrc`) so any
-running CLIs that already exported the old token pick up the new one.
+running CLIs that already exported the old token pick up the new one. A
+re-run of `install.sh` keeps the token in `.env`, even from a shell that still
+exports the old one (it says so).
 Connectors (Claude.ai, ChatGPT Desktop, Custom GPT) need their bearer
 header updated manually.
 
@@ -156,10 +158,27 @@ Git Bash: GNU sed, the recipe above works as-is.
 ## Upgrade
 
 ```bash
-git pull
-docker-compose pull
-docker-compose up -d
+bash install.sh --upgrade            # or: --upgrade <version>
 ```
+
+It pulls the new image, checks that it loads and that it accepts your
+configuration, swaps it in, and rolls back on its own if the new server does
+not come up healthy. A re-run of `install.sh` keeps your `.env` settings,
+including keys it does not manage, and its token.
+
+To upgrade by hand, check the configuration against the new image before you
+swap it in:
+
+```bash
+docker compose pull memory-server
+docker compose run --rm --no-deps -T --entrypoint node memory-server bin/check-env.mjs
+docker compose up -d --no-deps memory-server
+```
+
+The middle command runs the new image's boot checks against your `.env`
+without starting it. If it prints a `FATAL` line, the new server would refuse
+to boot: fix `.env` first, and the running server keeps serving meanwhile. An
+image from before the check existed answers `Cannot find module`.
 
 ## Alternative: bare install (no Docker)
 

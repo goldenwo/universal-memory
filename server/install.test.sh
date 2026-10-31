@@ -951,6 +951,14 @@ case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
 esac
+# Pre-start config check (#400): `compose ... run --rm --no-deps -T ... memory-server ...`.
+# FAKE_ENVCHECK_RC=1 models the target image refusing the configuration.
+if [[ "$args" == compose*" run "*"memory-server"* ]]; then
+  if [ "${FAKE_ENVCHECK_RC:-0}" = "1" ]; then
+    echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2
+  fi
+  exit "${FAKE_ENVCHECK_RC:-0}"
+fi
 # Pre-flight: `docker run --rm --entrypoint node <image> ...`
 if [[ "$args" == run* ]]; then
   if [ "${FAKE_PREFLIGHT_RC:-0}" != "0" ]; then
@@ -1125,7 +1133,7 @@ run_upgrade() {
     _UM_REPO_ROOT="$REPO_ROOT" \
     HOME="$(dirname "$isolated_sh")" \
     FAKE_DOCKER_LOG="$log" \
-    _UM_UPGRADE_POLL_ATTEMPTS=1 \
+    _UM_HEALTH_POLL_ATTEMPTS=1 \
     MEM0_MCP_PORT=6335 \
     ${envs[@]+"${envs[@]}"} \
     bash "$isolated_sh" "$@" 2>&1
@@ -1370,7 +1378,7 @@ FAKE
 chmod +x "$T29B/bin/curl"
 rm -f "${TMPDIR:-/tmp}/t29b-health-calls"
 T29B_OUT=$(run_upgrade "$T29B/bin" "$T29B_SH" "$T29B_LOG" \
-  FAKE_RESTART_COUNT=1 _UM_UPGRADE_POLL_ATTEMPTS=3 -- --upgrade) || T29B_EXIT=$?
+  FAKE_RESTART_COUNT=1 _UM_HEALTH_POLL_ATTEMPTS=3 -- --upgrade) || T29B_EXIT=$?
 assert_exit_zero "T29b: one restart + healthy ⇒ upgrade succeeds" "$T29B_EXIT"
 assert_contains "T29b: reports completion" "$T29B_OUT" "Upgrade complete"
 assert_not_contains "T29b: no crash-loop verdict" "$T29B_OUT" "CRASH-LOOPING"
@@ -1585,6 +1593,32 @@ assert_exit_zero "T28c: --verify exits 0 with leading whitespace" "$T28C_EXIT"
 assert_contains "T28c: port trimmed in health URL" "$T28C_OUT" "http://localhost:6335/health"
 assert_contains "T28c: vault path trimmed" "$T28C_OUT" "vault-dir"
 
+# T28d: a value ending in '=' keeps it. The loader split lines with
+# `IFS='=' read k v`, which drops one trailing '=' from the value — a base64
+# value, or this vault path, lost its last character (#400).
+echo ""
+echo "=== T28d: --verify keeps a trailing '=' in a value ==="
+T28D="$TMPROOT/t28d"
+mkdir -p "$T28D/vault=" "$T28D/plugins" "$T28D/home"
+make_fakebin "$T28D/bin" 200
+T28D_SH=$(make_isolated_server "$T28D/server")
+mkdir -p "$T28D/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T28D/plugins/cache/universal-memory/universal-memory/1.8.1"
+{
+  printf 'MEM0_MCP_PORT=6335\n'
+  printf 'UM_VAULT_DIR=%s\n' "$T28D/vault="
+  printf "UM_OPENAI_API_KEY=sk-testkey12345\n"
+} > "$T28D/server/.env"
+
+T28D_EXIT=0
+T28D_OUT=$(env PATH="$T28D/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  CLAUDE_PLUGINS_DIR="$T28D/plugins" \
+  HOME="$T28D/home" \
+  bash "$T28D_SH" --verify 2>&1) || T28D_EXIT=$?
+
+assert_exit_zero "T28d: --verify exits 0 with a value ending in '='" "$T28D_EXIT"
+assert_contains "T28d: the vault path keeps its trailing '='" "$T28D_OUT" "$T28D/vault="
+
 # ─── T32: --upgrade refreshes the um CLI after a healthy server upgrade ──────
 # The CLI is a copy of the repo's scripts with no self-update path, so it stays
 # at whatever version was installed until someone re-runs the installer. That
@@ -1612,7 +1646,7 @@ T32_EXIT=0
 T32_OUT=$(env -i PATH="$T32/bin:/usr/bin:/bin" \
   _UM_REPO_ROOT="$T32/repo" HOME="$T32/home" \
   FAKE_DOCKER_LOG="$T32_LOG" UM_CLI_INSTALL_LOG="$T32_CLI_LOG" \
-  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  _UM_HEALTH_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
   bash "$T32_SH" --upgrade 2>&1) || T32_EXIT=$?
 
 assert_exit_zero "T32: upgrade exits 0" "$T32_EXIT"
@@ -1642,7 +1676,7 @@ T32B_EXIT=0
 T32B_OUT=$(env -i PATH="$T32B/bin:/usr/bin:/bin" \
   _UM_REPO_ROOT="$T32B/repo" HOME="$T32B/home" \
   FAKE_DOCKER_LOG="$T32B/docker.log" UM_CLI_INSTALL_LOG="$T32B_CLI_LOG" \
-  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  _UM_HEALTH_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
   bash "$T32B_SH" --upgrade 2>&1) || T32B_EXIT=$?
 
 assert_exit_zero "T32b: upgrade still exits 0" "$T32B_EXIT"
@@ -1676,7 +1710,7 @@ T32C_EXIT=0
 T32C_OUT=$(env -i PATH="$T32C/bin:/usr/bin:/bin" \
   _UM_REPO_ROOT="$T32C/repo" HOME="$T32C/home" \
   FAKE_DOCKER_LOG="$T32C_LOG" \
-  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  _UM_HEALTH_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
   bash "$T32C_SH" --upgrade 2>&1) || T32C_EXIT=$?
 
 assert_exit_zero "T32c: failing CLI refresh still exits 0" "$T32C_EXIT"
@@ -1698,7 +1732,7 @@ T32D_EXIT=0
 T32D_OUT=$(env -i PATH="$T32D/bin:/usr/bin:/bin" \
   _UM_REPO_ROOT="$T32D/repo" HOME="$T32D/home" \
   FAKE_DOCKER_LOG="$T32D/docker.log" \
-  _UM_UPGRADE_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
+  _UM_HEALTH_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 \
   bash "$T32D_SH" --upgrade 2>&1) || T32D_EXIT=$?
 
 assert_exit_zero "T32d: still exits 0 on a partial tree" "$T32D_EXIT"
@@ -2330,6 +2364,162 @@ for case in "tpi1:1" "tpi2:"; do
     assert_contains "TPI $name: names the marketplace commands otherwise" "$TPI_OUT" "claude plugin marketplace add goldenwo/universal-memory"
   fi
 done
+
+# ─── TCE: the target image checks the configuration before it starts (#400) ──
+# A malformed checked knob refuses boot (#399), and the install path used to find
+# out only by polling /health for 180 s, with no reason printed. The installer
+# now runs the image's own boot checks (bin/check-env.mjs, through compose so it
+# sees the server's exact environment) before `up -d`: a refusal stops the
+# install with the FATAL line and the running server untouched.
+#
+# make_fake_docker_envcheck <dest_dir>: records every invocation to
+# $FAKE_DOCKER_LOG and answers
+#   FAKE_ENVCHECK_RC    the check's exit: 0 accepted, 1 refused (prints a FATAL
+#                       line), 3 the image has no bin/check-env.mjs, other: docker
+#                       itself failed
+#   FAKE_RESTART_COUNT  RestartCount of the memory-server container
+make_fake_docker_envcheck() {
+  local dest="$1"
+  mkdir -p "$dest"
+  cat > "$dest/docker" <<'FAKE'
+#!/usr/bin/env bash
+args="$*"
+[ -n "${FAKE_DOCKER_LOG:-}" ] && printf 'ARGS=%s\n' "$args" >> "$FAKE_DOCKER_LOG"
+case "$args" in
+  *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
+  info|*" info"*)      echo "{}"; exit 0 ;;
+esac
+if [[ "$args" == compose*" run "*"memory-server"* ]]; then
+  case "${FAKE_ENVCHECK_RC:-0}" in
+    0) echo "[check-env] ok: the server accepts this environment" ;;
+    1) echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2 ;;
+    3) ;;
+    # Compose's own exit 1, before the check ran: not a refusal.
+    pullfail) echo "Error response from daemon: manifest unknown" >&2; exit 1 ;;
+    *) echo "Error response from daemon: no such network" >&2 ;;
+  esac
+  exit "${FAKE_ENVCHECK_RC:-0}"
+fi
+if [[ "$args" == *"ps -q"* ]]; then echo "c0ffee1234ab"; exit 0; fi
+if [[ "$args" == *".RestartCount"* ]]; then echo "${FAKE_RESTART_COUNT:-0}"; exit 0; fi
+if [[ "$args" == *" logs "* ]]; then
+  echo 'memory-server-1  | [mem0-mcp] FATAL: Qdrant unreachable after 30 attempts: connect ECONNREFUSED'
+  exit 0
+fi
+if [[ "$args" == *"ps"* ]]; then echo "NAME            STATUS"; echo "memory-server   Up 2 hours"; exit 0; fi
+exit 0
+FAKE
+  chmod +x "$dest/docker"
+}
+
+# _ce_setup <dir>: a fresh install tree with make_fakebin's fakes and the docker above.
+_ce_setup() {
+  mkdir -p "$1/vault" "$1/plugins" "$1/home"; touch "$1/home/.bashrc"
+  make_fakebin "$1/bin" 200; make_fake_docker_envcheck "$1/bin"
+  make_isolated_server "$1/server" >/dev/null
+}
+# _ce_install <dir> [VAR=value ...]: a non-interactive install from <dir>.
+_ce_install() {
+  local t="$1"; shift
+  run_install "$t/bin" "$t/server/install.sh" \
+    UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$t/vault" UM_OPENAI_API_KEY=sk-testkey12345 UM_SUMMARY_ENABLED=true \
+    UM_TEMPORAL_DECAY=false CLAUDE_PLUGINS_DIR="$t/plugins" UM_SKIP_KEY_VALIDATION=1 \
+    SHELL=/bin/bash HOME="$t/home" FAKE_DOCKER_LOG="$t/docker.log" "$@"
+}
+# _ce_line <log> <pattern>: line number of the first log line containing <pattern>, or 0.
+_ce_line() { local n; n=$(grep -nF -- "$2" "$1" 2>/dev/null | head -1 | cut -d: -f1); echo "${n:-0}"; }
+
+echo ""
+echo "=== TCE1: the image refuses the configuration ⇒ not started, reason shown ==="
+T="$TMPROOT/tce1"; _ce_setup "$T"
+TCE1_EXIT=0
+TCE1_OUT=$(_ce_install "$T" FAKE_ENVCHECK_RC=1) || TCE1_EXIT=$?
+assert_exit_nonzero "TCE1: install exits non-zero" "$TCE1_EXIT"
+assert_contains "TCE1: the image's FATAL line is shown" "$TCE1_OUT" 'FATAL: UM_RATE_LIMIT_BURST must be'
+assert_contains "TCE1: says the server was not started" "$TCE1_OUT" "NOT started"
+assert_eq "TCE1: compose up never ran" "$(_ce_line "$T/docker.log" " up -d")" "0"
+
+echo ""
+echo "=== TCE2: the image accepts it ⇒ the check runs, then the stack starts ==="
+T="$TMPROOT/tce2"; _ce_setup "$T"
+TCE2_EXIT=0
+TCE2_OUT=$(_ce_install "$T") || TCE2_EXIT=$?
+assert_exit_zero "TCE2: install exits 0" "$TCE2_EXIT"
+TCE2_RUN=$(_ce_line "$T/docker.log" "run --rm --no-deps -T --entrypoint sh memory-server")
+TCE2_UP=$(_ce_line "$T/docker.log" " up -d")
+if [ "$TCE2_RUN" -gt 0 ] && [ "$TCE2_UP" -gt "$TCE2_RUN" ]; then
+  pass "TCE2: the check runs in the service's container, before compose up"
+else
+  fail_test "TCE2: the check runs in the service's container, before compose up" "check@$TCE2_RUN up@$TCE2_UP; log: $(cat "$T/docker.log")"
+fi
+
+echo ""
+echo "=== TCE3: an image without the check, or docker failing to run it ⇒ install goes on ==="
+for case in "3:predates the config check" "125:Could not run the config check" \
+            "pullfail:Could not run the config check"; do
+  rc="${case%%:*}"; want="${case#*:}"
+  T="$TMPROOT/tce3-$rc"; _ce_setup "$T"
+  TCE3_EXIT=0
+  TCE3_OUT=$(_ce_install "$T" FAKE_ENVCHECK_RC="$rc") || TCE3_EXIT=$?
+  assert_exit_zero "TCE3 rc=$rc: install exits 0" "$TCE3_EXIT"
+  assert_contains "TCE3 rc=$rc: says so" "$TCE3_OUT" "$want"
+  if [ "$(_ce_line "$T/docker.log" " up -d")" -gt 0 ]; then pass "TCE3 rc=$rc: the stack starts"; else fail_test "TCE3 rc=$rc: the stack starts" "no up -d"; fi
+done
+
+# The install path's health poll used the clock alone: a crash-looping server
+# cost 180 s and ended with no reason. It now shares --upgrade's poll, which
+# watches RestartCount, and prints the server's last log lines on failure.
+echo ""
+echo "=== TCE4: a crash-looping server is reported at once, with its logs ==="
+T="$TMPROOT/tce4"; _ce_setup "$T"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+[[ "$*" == *"/health"* ]] && exit 7
+exit 0
+FAKE
+chmod +x "$T/bin/curl"
+TCE4_EXIT=0
+TCE4_START=$(date +%s)
+TCE4_OUT=$(_ce_install "$T" FAKE_RESTART_COUNT=5 _UM_HEALTH_POLL_ATTEMPTS=5) || TCE4_EXIT=$?
+TCE4_SECS=$(( $(date +%s) - TCE4_START ))
+assert_exit_nonzero "TCE4: install exits non-zero" "$TCE4_EXIT"
+assert_contains "TCE4: names the crash loop" "$TCE4_OUT" "CRASH-LOOPING"
+assert_contains "TCE4: shows the server's log" "$TCE4_OUT" "Qdrant unreachable after 30 attempts"
+if [ "$TCE4_SECS" -lt 30 ]; then pass "TCE4: does not wait out the clock"; else fail_test "TCE4: does not wait out the clock" "took ${TCE4_SECS}s"; fi
+
+echo ""
+echo "=== TCE5: --upgrade: the new image refuses the configuration ⇒ nothing swapped ==="
+TCE5="$TMPROOT/tce5"
+mkdir -p "$TCE5/server"
+make_fakebin "$TCE5/bin" 200
+make_fake_docker_upgrade "$TCE5/bin"
+TCE5_SH=$(make_isolated_server "$TCE5/server")
+TCE5_EXIT=0
+TCE5_OUT=$(run_upgrade "$TCE5/bin" "$TCE5_SH" "$TCE5/docker.log" FAKE_ENVCHECK_RC=1 -- --upgrade) || TCE5_EXIT=$?
+assert_exit_nonzero "TCE5: --upgrade exits non-zero" "$TCE5_EXIT"
+assert_contains "TCE5: the image's FATAL line is shown" "$TCE5_OUT" 'FATAL: UM_RATE_LIMIT_BURST must be'
+assert_contains "TCE5: says nothing was swapped" "$TCE5_OUT" "NOTHING WAS SWAPPED"
+assert_eq "TCE5: compose up never ran" "$(_ce_line "$TCE5/docker.log" " up -d")" "0"
+
+echo ""
+echo "=== TCE6: --upgrade checks the configuration after the pull, before the swap ==="
+TCE6="$TMPROOT/tce6"
+mkdir -p "$TCE6/server"
+make_fakebin "$TCE6/bin" 200
+make_fake_docker_upgrade "$TCE6/bin"
+TCE6_SH=$(make_isolated_server "$TCE6/server")
+TCE6_EXIT=0
+TCE6_OUT=$(run_upgrade "$TCE6/bin" "$TCE6_SH" "$TCE6/docker.log" -- --upgrade) || TCE6_EXIT=$?
+assert_exit_zero "TCE6: --upgrade exits 0" "$TCE6_EXIT"
+TCE6_PULL=$(_ce_line "$TCE6/docker.log" "pull memory-server")
+TCE6_RUN=$(_ce_line "$TCE6/docker.log" "run --rm --no-deps -T --entrypoint sh memory-server")
+TCE6_UP=$(_ce_line "$TCE6/docker.log" " up -d")
+if [ "$TCE6_PULL" -gt 0 ] && [ "$TCE6_RUN" -gt "$TCE6_PULL" ] && [ "$TCE6_UP" -gt "$TCE6_RUN" ]; then
+  pass "TCE6: pull, then the check, then the swap"
+else
+  fail_test "TCE6: pull, then the check, then the swap" "pull@$TCE6_PULL check@$TCE6_RUN up@$TCE6_UP"
+fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
