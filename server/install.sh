@@ -304,6 +304,9 @@ _UM_POLL_ATTEMPTS="${_UM_HEALTH_POLL_ATTEMPTS:-90}"
 # pull that fails, say), so a 1 without the FATAL line is reported as 2.
 _um_check_env_in_image() {
 	local _rc=0
+	# The one-off container bind-mounts the history dir like the server does; a
+	# source dir Docker creates is root-owned (see _um_ensure_history_dir).
+	_um_ensure_history_dir
 	_UM_ENVCHECK_OUT=$(_compose run --rm --no-deps -T --entrypoint sh memory-server \
 		-c '[ -f bin/check-env.mjs ] || exit 3; exec node bin/check-env.mjs' 2>&1) || _rc=$?
 	if [ "$_rc" -eq 1 ] && ! printf '%s\n' "$_UM_ENVCHECK_OUT" | grep -q '^\[check-env\] FATAL'; then
@@ -739,8 +742,6 @@ if [ "${1:-}" = "--upgrade" ]; then
 	# Provisional; step 1 replaces it with what compose reports for the
 	# actually-running container (a host override can republish the port).
 	_UPG_HEALTH="http://localhost:$(_um_port)/health"
-	# The same 180s ceiling as the install path (see _um_poll_health).
-	_UPG_POLL_ATTEMPTS="$_UM_POLL_ATTEMPTS"
 	# Protective tag for the rollback image (BLOCKER-1). See step 1.
 	_UPG_ROLLBACK_TAG_NAME="um-rollback:previous"
 
@@ -926,14 +927,14 @@ if [ "${1:-}" = "--upgrade" ]; then
 
 	# ── Step 5/5: health-verify, else auto-rollback ──────────────────────────
 	echo ""
-	echo "[upgrade] Step 5/5 — waiting for $_UPG_HEALTH (up to $((_UPG_POLL_ATTEMPTS * 2))s)..."
+	echo "[upgrade] Step 5/5 — waiting for $_UPG_HEALTH (up to $((_UM_POLL_ATTEMPTS * 2))s)..."
 	_UPG_HEALTHY=0
 	_UPG_WHY=""
 	if [ "$_UPG_SWAP_RC" -ne 0 ]; then
 		_UPG_WHY="compose up -d failed (exit $_UPG_SWAP_RC)."
 	else
 		_UPG_POLL_RC=0
-		_um_poll_health "$_UPG_HEALTH" "$_UPG_POLL_ATTEMPTS" || _UPG_POLL_RC=$?
+		_um_poll_health "$_UPG_HEALTH" "$_UM_POLL_ATTEMPTS" || _UPG_POLL_RC=$?
 		case "$_UPG_POLL_RC" in
 			0)
 				# A 200 on the port only proves SOMETHING is listening there —
@@ -954,7 +955,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 				fi
 				;;
 			2)  _UPG_WHY="The new container is CRASH-LOOPING (docker reports it restarting). Not waiting out the clock." ;;
-			*)  _UPG_WHY="The new container never reported healthy at $_UPG_HEALTH within $((_UPG_POLL_ATTEMPTS * 2))s." ;;
+			*)  _UPG_WHY="The new container never reported healthy at $_UPG_HEALTH within $((_UM_POLL_ATTEMPTS * 2))s." ;;
 		esac
 	fi
 
@@ -976,7 +977,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 		_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_RB_RC=$?
 		_UPG_RB_POLL_RC=0
 		if [ "$_UPG_RB_RC" -eq 0 ]; then
-			_um_poll_health "$_UPG_HEALTH" "$_UPG_POLL_ATTEMPTS" || _UPG_RB_POLL_RC=$?
+			_um_poll_health "$_UPG_HEALTH" "$_UM_POLL_ATTEMPTS" || _UPG_RB_POLL_RC=$?
 		else
 			_UPG_RB_POLL_RC=1
 		fi
@@ -1661,7 +1662,10 @@ fi
 # over from the backup as its LAST line, verbatim, so compose reads the same
 # value (operator ruling, #400). Comments and lines compose would not read as a
 # key are not carried. No backup ([O]verwrite, or a first install), nothing kept.
+# A quoted value that spans lines (compose allows it) is not carried: its first
+# line alone is an unclosed quote compose refuses, so the re-run names it instead.
 kept_keys=()
+_um_kept_skipped=()
 if [ -n "${BACKUP:-}" ] && [ -f "$BACKUP" ]; then
 	_um_kept_buffer=""
 	# Distinct keys in order of first appearance; each carries its last line.
@@ -1670,9 +1674,18 @@ if [ -n "${BACKUP:-}" ] && [ -f "$BACKUP" ]; then
 	for _k in $_um_kept_keys_in_order; do
 		grep -qE "^[[:space:]]*(export[[:space:]]+)?${_k}[[:space:]]*=" "$ENV_FILE" && continue
 		_last=$(grep -E "^[[:space:]]*(export[[:space:]]+)?${_k}[[:space:]]*=" "$BACKUP" | tail -1)
-		_um_kept_buffer+="${_last%$'\r'}"$'\n'
+		_last="${_last%$'\r'}"
+		_v="${_last#*=}"; _v="${_v#"${_v%%[![:space:]]*}"}"
+		case "$_v" in
+			\"*) [[ "${_v#\"}" == *\"* ]] || { _um_kept_skipped+=("$_k"); continue; } ;;
+			\'*) [[ "${_v#\'}" == *\'* ]] || { _um_kept_skipped+=("$_k"); continue; } ;;
+		esac
+		_um_kept_buffer+="$_last"$'\n'
 		kept_keys+=("$_k")
 	done
+	if [ "${#_um_kept_skipped[@]}" -gt 0 ]; then
+		warn "Not carried over (a quoted value spanning lines): ${_um_kept_skipped[*]} — copy them from $BACKUP by hand."
+	fi
 	if [ -n "$_um_kept_buffer" ]; then
 		{
 			printf '\n'
@@ -1681,7 +1694,7 @@ if [ -n "${BACKUP:-}" ] && [ -f "$BACKUP" ]; then
 		} >> "$ENV_FILE"
 		info "Re-run kept ${#kept_keys[@]} settings this installer does not manage, from the previous .env: ${kept_keys[*]}"
 	fi
-	unset _um_kept_buffer _um_kept_keys_in_order _k _last
+	unset _um_kept_buffer _um_kept_keys_in_order _k _last _v
 fi
 
 # ─── Plugin install (v0.5: delegated to standalone scripts) ──────────────────
@@ -1846,7 +1859,8 @@ else
 	# configuration? Asked while any running server is still serving; the check
 	# pulls or builds the image exactly as `up` would. A malformed checked knob
 	# (#399) used to surface as 180s of silent health polling.
-	info "Checking the configuration against the server image (nothing is started yet)..."
+	info "Checking the configuration against the server image (nothing is started yet)."
+	info "  A first run pulls or builds the image here, which can take a few minutes."
 	_UM_ENVCHECK_RC=0
 	_um_check_env_in_image || _UM_ENVCHECK_RC=$?
 	case "$_UM_ENVCHECK_RC" in

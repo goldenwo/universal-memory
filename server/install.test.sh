@@ -954,6 +954,10 @@ esac
 # Pre-start config check (#400): `compose ... run --rm --no-deps -T ... memory-server ...`.
 # FAKE_ENVCHECK_RC=1 models the target image refusing the configuration.
 if [[ "$args" == compose*" run "*"memory-server"* ]]; then
+  # FAKE_RUN_SAW_DIR: record whether FAKE_HISTORY_DIR existed when the check ran.
+  if [ -n "${FAKE_RUN_SAW_DIR:-}" ]; then
+    if [ -d "${FAKE_HISTORY_DIR:-}" ]; then echo yes; else echo no; fi > "$FAKE_RUN_SAW_DIR"
+  fi
   if [ "${FAKE_ENVCHECK_RC:-0}" = "1" ]; then
     echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2
   fi
@@ -2520,6 +2524,23 @@ if [ "$TCE6_PULL" -gt 0 ] && [ "$TCE6_RUN" -gt "$TCE6_PULL" ] && [ "$TCE6_UP" -g
 else
   fail_test "TCE6: pull, then the check, then the swap" "pull@$TCE6_PULL check@$TCE6_RUN up@$TCE6_UP"
 fi
+
+# The check's one-off container bind-mounts the history dir like the server.
+# Run before the swap made it, Docker created a missing dir root-owned and the
+# server fell back to /tmp, losing its counters on every restart (THD's bug, via
+# a new door). An install from before 1.27.1 has no history dir yet.
+echo ""
+echo "=== TCE7: --upgrade's check runs with the history dir already there ==="
+TCE7="$TMPROOT/tce7"
+mkdir -p "$TCE7/server"
+make_fakebin "$TCE7/bin" 200
+make_fake_docker_upgrade "$TCE7/bin"
+TCE7_SH=$(make_isolated_server "$TCE7/server")
+TCE7_EXIT=0
+TCE7_OUT=$(run_upgrade "$TCE7/bin" "$TCE7_SH" "$TCE7/docker.log" \
+  FAKE_RUN_SAW_DIR="$TCE7/run-saw-dir" FAKE_HISTORY_DIR="$TCE7/server/data/mem0-history" -- --upgrade) || TCE7_EXIT=$?
+assert_exit_zero "TCE7: --upgrade exits 0" "$TCE7_EXIT"
+assert_eq "TCE7: the history dir existed when the check ran" "$(cat "$TCE7/run-saw-dir" 2>/dev/null)" "yes"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

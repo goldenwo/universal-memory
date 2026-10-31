@@ -163,8 +163,10 @@ bash install.sh --upgrade            # or: --upgrade <version>
 
 It pulls the new image, checks that it loads and that it accepts your
 configuration, swaps it in, and rolls back on its own if the new server does
-not come up healthy. A re-run of `install.sh` keeps your `.env` settings,
-including keys it does not manage, and its token.
+not come up healthy. A re-run of `install.sh` that backs up `.env` (the
+default answer, and always when non-interactive) keeps your settings,
+including keys it does not manage, and its token; `[O]verwrite` drops tuned
+values and keys it does not manage.
 
 To upgrade by hand, check the configuration against the new image before you
 swap it in:

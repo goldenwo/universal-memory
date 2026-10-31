@@ -671,6 +671,8 @@ UM_DUP=2
   export UM_EXPORTED = 3
 UM_EMPTY=
 UM_RATE_LIMIT_RPM=90
+UM_MULTI="first line
+second line"
 EOF
 T7_EXIT=0
 T7_OUT=$(run_token_install "$T7/bin" "$T7_HOME" "$T7_STAGE") || T7_EXIT=$?
@@ -688,6 +690,14 @@ if printf '%s\n' "$T7_BODY" | grep -qF '# a hand-written comment'; then
   fail_test "T7: comments are not carried" "found the seeded comment"
 else
   pass "T7: comments are not carried"
+fi
+# A quoted value spanning lines is named, not carried: its first line alone is an
+# unclosed quote, and compose would refuse the whole file.
+assert_eq "T7: a multi-line quoted value is not carried" "$(grep -cE '^UM_MULTI=' "$T7_ENV_FILE")" "0"
+if printf '%s\n' "$T7_OUT" | grep -q 'Not carried over.*UM_MULTI'; then
+  pass "T7: the multi-line value is named for a hand copy"
+else
+  fail_test "T7: the multi-line value is named for a hand copy" "output: $(printf '%s\n' "$T7_OUT" | grep -i 'carried')"
 fi
 if printf '%s\n' "$T7_OUT" | grep -q 'kept 6 settings'; then
   pass "T7: the kept keys are reported"
