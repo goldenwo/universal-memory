@@ -393,6 +393,39 @@ assert_contains "T10: env-file write=true → SECURITY WARNING" "$T10_OUT" "SECU
 assert_contains "T10: detection source is env-file"        "$T10_OUT" "env-file"
 
 # ---------------------------------------------------------------------------
+# Test 10b: the env-file tier reads the key as compose does (#400) — an
+# `export` prefix, spaces around `=`, quotes and an inline comment are not the
+# value, and the last line for the key wins. Each line below is one compose
+# reads as true; the old reader saw `export ...` as no key and `true # on` as
+# "true#on", so the banner said writes were off on a writes-on server.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Test 10b: env-file tier reads compose's key and value syntax ==="
+
+T10B_DIR="$TMPDIR_ROOT/t10b"
+T10B_BIN="$T10B_DIR/bin"
+write_stub_cloudflared "$T10B_BIN"
+write_stub_curl "$T10B_BIN" ""
+mkdir -p "$T10B_DIR"
+_t10b_i=0
+for _t10b_line in \
+  'UM_MCP_WRITE_ENABLED=true # capture on' \
+  'export UM_MCP_WRITE_ENABLED = "true"' \
+  '  UM_MCP_WRITE_ENABLED= true' \
+  $'UM_MCP_WRITE_ENABLED=false\nUM_MCP_WRITE_ENABLED=true'; do
+  _t10b_i=$((_t10b_i + 1))
+  printf 'UM_AUTH_TOKEN=stub\n%s\n' "$_t10b_line" > "$T10B_DIR/server.env"
+  T10B_EXIT=0
+  T10B_OUT=$(env -u UM_MCP_WRITE_ENABLED \
+    UM_TUNNEL_DRY_RUN=1 UM_TUNNEL_LOG="$T10B_DIR/tunnel-$_t10b_i.log" \
+    UM_SERVER_ENV_FILE="$T10B_DIR/server.env" \
+    PATH="$(stubbed_path "$T10B_BIN")" bash "$BIN" 2>&1) || T10B_EXIT=$?
+  assert_eq       "T10b.$_t10b_i: exit code 0"                       "$T10B_EXIT" "0"
+  assert_contains "T10b.$_t10b_i: write=true read → SECURITY WARNING" "$T10B_OUT" "SECURITY WARNING"
+  assert_contains "T10b.$_t10b_i: detection source is env-file"       "$T10B_OUT" "env-file"
+done
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

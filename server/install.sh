@@ -169,8 +169,12 @@ _um_env_file_value() {
 # the last occurrence of a duplicated key, and so must every check built on this.
 _um_load_env_file() {
 	[ -f "$ENV_FILE" ] || return 0
-	local _um_loaded=' '
-	while IFS='=' read -r _k _v || [ -n "$_k" ]; do
+	local _um_loaded=' ' _line
+	while IFS= read -r _line || [ -n "$_line" ]; do
+		# Split at the first '=' only: `IFS='=' read k v` dropped one trailing
+		# '=' from the value, so a base64 value ending in '=' lost it (#400).
+		_k="${_line%%=*}"
+		if [ "$_k" = "$_line" ]; then _v=""; else _v="${_line#*=}"; fi
 		# Key syntax compose accepts: leading whitespace, an `export ` prefix, and
 		# whitespace before the `=` (`KEY = v`) are not part of the name.
 		_k="${_k#"${_k%%[![:space:]]*}"}"
@@ -241,6 +245,85 @@ _resolved_host_port() {
 	local _p
 	_p="$(_um_compose_port)"
 	[ -n "$_p" ] && printf '%s' "$_p" || _um_port
+}
+
+# Bounded health poll of URL $1, $2 attempts 2s apart, no sleep after the last.
+# Exit: 0 healthy, 1 exhausted, 2 crash-looping. The install path and --upgrade
+# both wait on it.
+#
+# It watches container STATE as well as the clock, because the two failure
+# modes want opposite treatment and a timer alone cannot tell them apart:
+#   • Repeatedly dying ⇒ waiting out the ceiling changes nothing. Say so now
+#     (--upgrade then rolls back).
+#   • Running but not answering ⇒ possibly just a slow boot on slow hardware.
+#     Keep waiting; a clock-only check would call this a failure and, under
+#     --upgrade, roll back a perfectly good upgrade.
+#
+# The signal is RestartCount, not the instantaneous Restarting flag, and it
+# tolerates the first two deaths. `depends_on` does not wait for readiness, so
+# a memory-server that starts before qdrant is accepting connections can
+# legitimately die once and come up fine on the retry — treating that first
+# exit as a crash-loop would fail a start that was about to succeed. `up -d`
+# recreates the container, so the count starts at 0 here. Docker's restart
+# backoff is short early on, so a genuine crash-loop still trips this within
+# seconds.
+_um_poll_health() {
+	local _url="$1" _attempts="$2" _i _cid _restarts
+	for _i in $(seq 1 "$_attempts"); do
+		if curl -sf --max-time 3 "$_url" >/dev/null 2>&1; then
+			return 0
+		fi
+		_cid=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
+		if [ -n "$_cid" ]; then
+			_restarts=$(docker inspect -f '{{.RestartCount}}' "$_cid" 2>/dev/null || true)
+			if [[ "$_restarts" =~ ^[0-9]+$ ]] && [ "$_restarts" -ge 3 ]; then
+				return 2
+			fi
+		fi
+		if [ "$_i" -lt "$_attempts" ]; then sleep 2; fi
+	done
+	return 1
+}
+# Test seam (same convention as _UM_REPO_ROOT): number of 2s health-poll
+# attempts. Not an operator knob — the default is the contract. 90 × 2s is
+# 180s, because a cold start on slow hardware (ARM Pi, constrained CI) can
+# exceed 90s. A crash-loop is detected by container STATE, not by this clock,
+# so a generous ceiling costs nothing on the failure path.
+_UM_POLL_ATTEMPTS="${_UM_HEALTH_POLL_ATTEMPTS:-90}"
+
+# #400 — would the image compose is about to start refuse this configuration?
+# Runs the image's own boot checks (bin/check-env.mjs: validateBootEnv, the list
+# the server runs before it starts) in a one-off container of the memory-server
+# service, so it sees exactly the environment the server would get (.env, the
+# shell's overrides, compose's pins), without its ports or its dependencies.
+# A refusal is found while any running server is still serving, instead of by
+# a server that crash-loops after the start or the swap. Leaves the output in
+# _UM_ENVCHECK_OUT. Exit: 0 accepted, 1 refused (the check printed its FATAL
+# line), 3 the image predates bin/check-env.mjs, anything else the check could
+# not run. Compose itself exits 1 when it fails before the check answers (a
+# pull that fails, say), so a 1 without the FATAL line is reported as 2.
+_um_check_env_in_image() {
+	local _rc=0
+	# The one-off container bind-mounts the history dir like the server does; a
+	# source dir Docker creates is root-owned (see _um_ensure_history_dir).
+	_um_ensure_history_dir
+	_UM_ENVCHECK_OUT=$(_compose run --rm --no-deps -T --entrypoint sh memory-server \
+		-c '[ -f bin/check-env.mjs ] || exit 3; exec node bin/check-env.mjs' 2>&1) || _rc=$?
+	if [ "$_rc" -eq 1 ] && ! printf '%s\n' "$_UM_ENVCHECK_OUT" | grep -q '^\[check-env\] FATAL'; then
+		_rc=2
+	fi
+	return "$_rc"
+}
+
+# The part of _um_check_env_in_image's output ($1) worth showing: the check's own
+# lines (its FATAL line), else — compose or docker failed before the check ran —
+# the last 20 lines, without the image-pull progress that precedes them.
+_um_envcheck_reason() {
+	if printf '%s\n' "$1" | grep -q '\[check-env\]'; then
+		printf '%s\n' "$1" | grep '\[check-env\]'
+	else
+		printf '%s\n' "$1" | tail -20
+	fi
 }
 
 # #320 — a non-loopback Qdrant publish is an unauthenticated read AND write
@@ -659,13 +742,6 @@ if [ "${1:-}" = "--upgrade" ]; then
 	# Provisional; step 1 replaces it with what compose reports for the
 	# actually-running container (a host override can republish the port).
 	_UPG_HEALTH="http://localhost:$(_um_port)/health"
-	# Test seam (same convention as _UM_REPO_ROOT): number of 2s health-poll
-	# attempts. Not an operator knob — the default is the contract. 90 × 2s
-	# matches the install path's 180s ceiling, which exists because a cold
-	# start on slow hardware (ARM Pi, constrained CI) can exceed 90s. A
-	# crash-loop is detected by container STATE, not by this clock, so a
-	# generous ceiling costs nothing on the failure path.
-	_UPG_POLL_ATTEMPTS="${_UM_UPGRADE_POLL_ATTEMPTS:-90}"
 	# Protective tag for the rollback image (BLOCKER-1). See step 1.
 	_UPG_ROLLBACK_TAG_NAME="um-rollback:previous"
 
@@ -684,42 +760,6 @@ if [ "${1:-}" = "--upgrade" ]; then
 	docker info >/dev/null 2>&1 || _ufail "Docker daemon not reachable. Start Docker Desktop (or the docker service) and re-run."
 	[ -f "$COMPOSE_FILE" ] || _ufail "Not finding $COMPOSE_FILE — run this from the repo's server/ directory or via ./install.sh."
 
-	# Bounded health poll, $1 = number of attempts 2s apart. No sleep after the
-	# last attempt. Exit: 0 healthy, 1 exhausted, 2 crash-looping.
-	#
-	# It watches container STATE as well as the clock, because the two failure
-	# modes want opposite treatment and a timer alone cannot tell them apart:
-	#   • Repeatedly dying ⇒ waiting out the ceiling changes nothing. Say so
-	#     and roll back now.
-	#   • Running but not answering ⇒ possibly just a slow boot on slow
-	#     hardware. Keep waiting; a clock-only check would call this a failure
-	#     and trigger a needless rollback of a perfectly good upgrade.
-	#
-	# The signal is RestartCount, not the instantaneous Restarting flag, and it
-	# tolerates the first two deaths. `depends_on` does not wait for readiness,
-	# so a memory-server that starts before qdrant is accepting connections can
-	# legitimately die once and come up fine on the retry — treating that first
-	# exit as a crash-loop would roll back an upgrade that was about to
-	# succeed. `up -d` recreates the container, so the count starts at 0 here.
-	# Docker's restart backoff is short early on, so a genuine crash-loop still
-	# trips this within seconds.
-	_upg_poll_health() {
-		local _attempts="$1" _i _cid _restarts
-		for _i in $(seq 1 "$_attempts"); do
-			if curl -sf --max-time 3 "$_UPG_HEALTH" >/dev/null 2>&1; then
-				return 0
-			fi
-			_cid=$(_compose ps -q memory-server 2>/dev/null | head -1 || true)
-			if [ -n "$_cid" ]; then
-				_restarts=$(docker inspect -f '{{.RestartCount}}' "$_cid" 2>/dev/null || true)
-				if [[ "$_restarts" =~ ^[0-9]+$ ]] && [ "$_restarts" -ge 3 ]; then
-					return 2
-				fi
-			fi
-			if [ "$_i" -lt "$_attempts" ]; then sleep 2; fi
-		done
-		return 1
-	}
 
 	echo ""
 	echo "[upgrade] Upgrading the universal-memory server."
@@ -857,6 +897,25 @@ if [ "${1:-}" = "--upgrade" ]; then
   If this tag is a fresh release, its image build is broken — please report it."
 	fi
 	_uok "Pre-flight passed — the new image loads mem0ai/oss and lib/stats.mjs."
+	# #400: the image above loads, but would it boot with THIS configuration? A
+	# value the new image refuses (a malformed checked knob, an unpriced model
+	# pin) used to show only after the swap, as a crash-loop and an auto-rollback.
+	_UPG_ENVCHECK_RC=0
+	_um_check_env_in_image || _UPG_ENVCHECK_RC=$?
+	case "$_UPG_ENVCHECK_RC" in
+		0) _uok "Pre-flight passed — the new image accepts this configuration." ;;
+		1)
+			_um_envcheck_reason "$_UM_ENVCHECK_OUT" | sed 's/^/[preflight] /' >&2
+			_ufail "Pre-flight FAILED — $_UPG_IMAGE would refuse to boot with this configuration (the FATAL line above says why).
+
+  NOTHING WAS SWAPPED. Your running server is untouched and still serving.
+
+  Fix $ENV_FILE and re-run: bash server/install.sh --upgrade${_UPG_VERSION:+ $_UPG_VERSION}" ;;
+		3) _uinfo "$_UPG_IMAGE predates the config check (bin/check-env.mjs); skipping it." ;;
+		*)
+			_um_envcheck_reason "$_UM_ENVCHECK_OUT" | sed 's/^/[preflight] /' >&2
+			_uwarn "Could not run the config check (exit $_UPG_ENVCHECK_RC); going on — the health check after the swap still guards it." ;;
+	esac
 
 	# ── Step 4/5: swap ───────────────────────────────────────────────────────
 	echo ""
@@ -868,14 +927,14 @@ if [ "${1:-}" = "--upgrade" ]; then
 
 	# ── Step 5/5: health-verify, else auto-rollback ──────────────────────────
 	echo ""
-	echo "[upgrade] Step 5/5 — waiting for $_UPG_HEALTH (up to $((_UPG_POLL_ATTEMPTS * 2))s)..."
+	echo "[upgrade] Step 5/5 — waiting for $_UPG_HEALTH (up to $((_UM_POLL_ATTEMPTS * 2))s)..."
 	_UPG_HEALTHY=0
 	_UPG_WHY=""
 	if [ "$_UPG_SWAP_RC" -ne 0 ]; then
 		_UPG_WHY="compose up -d failed (exit $_UPG_SWAP_RC)."
 	else
 		_UPG_POLL_RC=0
-		_upg_poll_health "$_UPG_POLL_ATTEMPTS" || _UPG_POLL_RC=$?
+		_um_poll_health "$_UPG_HEALTH" "$_UM_POLL_ATTEMPTS" || _UPG_POLL_RC=$?
 		case "$_UPG_POLL_RC" in
 			0)
 				# A 200 on the port only proves SOMETHING is listening there —
@@ -896,7 +955,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 				fi
 				;;
 			2)  _UPG_WHY="The new container is CRASH-LOOPING (docker reports it restarting). Not waiting out the clock." ;;
-			*)  _UPG_WHY="The new container never reported healthy at $_UPG_HEALTH within $((_UPG_POLL_ATTEMPTS * 2))s." ;;
+			*)  _UPG_WHY="The new container never reported healthy at $_UPG_HEALTH within $((_UM_POLL_ATTEMPTS * 2))s." ;;
 		esac
 	fi
 
@@ -918,7 +977,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 		_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_RB_RC=$?
 		_UPG_RB_POLL_RC=0
 		if [ "$_UPG_RB_RC" -eq 0 ]; then
-			_upg_poll_health "$_UPG_POLL_ATTEMPTS" || _UPG_RB_POLL_RC=$?
+			_um_poll_health "$_UPG_HEALTH" "$_UM_POLL_ATTEMPTS" || _UPG_RB_POLL_RC=$?
 		else
 			_UPG_RB_POLL_RC=1
 		fi
@@ -1123,7 +1182,16 @@ fi
 # for the token lifecycle. installer/install.sh's check_prereqs mirrors the
 # "is a token already available" test below to decide whether openssl is a
 # prerequisite; change them together.
-if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
+#
+# The .env token, when there is one, wins over the environment (#400, operator
+# ruling): .env is what the server reads, and the installer's marker block
+# exports UM_AUTH_TOKEN from ~/.um/auth-token into every login shell, so a
+# shell opened before a rotation still holds the rotated-away token. A re-run
+# from it used to write that token back and recreate the server, and clients
+# holding the new one got 401. A differing export is reported (never printed)
+# and not used; rotation is an edit to .env (server/README.md). An export is the
+# token only when .env has none: a pre-generated token for a first install.
+if [ -f "$ENV_FILE" ]; then
 	# Read as compose (and so the server) reads it: the last line's bare value.
 	# Reusing the first line of a token rotated by appending one, or keeping
 	# its quotes and inline comment, would change the bearer token every client
@@ -1131,6 +1199,11 @@ if [ -z "${UM_AUTH_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
 	# lets the generation branch handle the fresh-token path downstream.
 	_UM_AT_EXISTING=$(_um_env_file_value UM_AUTH_TOKEN)
 	if [ -n "$_UM_AT_EXISTING" ]; then
+		if [ -n "${UM_AUTH_TOKEN:-}" ] && [ "$UM_AUTH_TOKEN" != "$_UM_AT_EXISTING" ]; then
+			warn "UM_AUTH_TOKEN in this shell differs from the one in $ENV_FILE — keeping the .env token."
+			warn "  A shell opened before a token rotation still exports the old one; a new shell picks up the current token."
+			warn "  To rotate it, edit .env: server/README.md, \"Advanced: rotating UM_AUTH_TOKEN\"."
+		fi
 		UM_AUTH_TOKEN="$_UM_AT_EXISTING"
 		info "Reusing existing UM_AUTH_TOKEN from .env."
 	fi
@@ -1510,10 +1583,12 @@ _um_read_backup_value() {
 	# comments are not part of the value: the server refuses a malformed
 	# protection knob at boot, so '120" # tuned' must come back as 120. Two
 	# repairs on top, both for the v0.6 knobs only (numbers, booleans, a log
-	# level): a stray trailing quote is dropped, because an earlier version
-	# of this reader wrote `"120" # tuned` back as `120" # tuned`; and a value
-	# that starts with '#' (compose's reading of `KEY= # c`) is no value, so
-	# the default applies instead of writing a knob the server would refuse.
+	# level — none of which can hold a quote): everything from a stray quote
+	# on is dropped, because an earlier version of this reader wrote
+	# `"120" # tuned` back as `120" # tuned`, and `"20"# tuned` as `20"# tuned`
+	# (no space before the #, so compose reads all of it); and a value that
+	# starts with '#' (compose's reading of `KEY= # c`) is no value, so the
+	# default applies instead of writing a knob the server would refuse.
 	#
 	# MUST ALWAYS return 0: this function is called via $(...) under
 	# `set -euo pipefail`, and a non-zero return would abort the whole install
@@ -1521,7 +1596,7 @@ _um_read_backup_value() {
 	local k="$1" _val=""
 	[ -z "${BACKUP:-}" ] && return 0
 	_val=$(_um_env_file_value "$k" "$BACKUP")
-	_val="${_val%[\"\']}"
+	_val="${_val%%[\"\']*}"
 	case "$_val" in \#*) _val="" ;; esac
 	printf '%s' "$_val"
 	return 0
@@ -1577,6 +1652,49 @@ if [ "${#added_keys[@]}" -gt 0 ]; then
 fi
 if [ "${#preserved_keys[@]}" -gt 0 ]; then
 	info "[install] preserved ${#preserved_keys[@]} user-tuned v0.6 env keys from prior .env"
+fi
+
+# ─── Keys this installer does not manage (#400) ──────────────────────────────
+# The writer above emits a fixed list and the v0.6 block its own keys; anything
+# else an operator put in .env (UM_CAPTURE_LEDGER_RETENTION_DAYS=400 on the Pi,
+# a pinned UM_VERSION, a model pin) used to be dropped by every re-run — the
+# retention silently fell back to the 30-day prune. Each such key is carried
+# over from the backup as its LAST line, verbatim, so compose reads the same
+# value (operator ruling, #400). Comments and lines compose would not read as a
+# key are not carried. No backup ([O]verwrite, or a first install), nothing kept.
+# A quoted value that spans lines (compose allows it) is not carried: its first
+# line alone is an unclosed quote compose refuses, so the re-run names it instead.
+kept_keys=()
+_um_kept_skipped=()
+if [ -n "${BACKUP:-}" ] && [ -f "$BACKUP" ]; then
+	_um_kept_buffer=""
+	# Distinct keys in order of first appearance; each carries its last line.
+	_um_kept_keys_in_order=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\2/p' "$BACKUP" \
+		| awk '!seen[$0]++')
+	for _k in $_um_kept_keys_in_order; do
+		grep -qE "^[[:space:]]*(export[[:space:]]+)?${_k}[[:space:]]*=" "$ENV_FILE" && continue
+		_last=$(grep -E "^[[:space:]]*(export[[:space:]]+)?${_k}[[:space:]]*=" "$BACKUP" | tail -1)
+		_last="${_last%$'\r'}"
+		_v="${_last#*=}"; _v="${_v#"${_v%%[![:space:]]*}"}"
+		case "$_v" in
+			\"*) [[ "${_v#\"}" == *\"* ]] || { _um_kept_skipped+=("$_k"); continue; } ;;
+			\'*) [[ "${_v#\'}" == *\'* ]] || { _um_kept_skipped+=("$_k"); continue; } ;;
+		esac
+		_um_kept_buffer+="$_last"$'\n'
+		kept_keys+=("$_k")
+	done
+	if [ "${#_um_kept_skipped[@]}" -gt 0 ]; then
+		warn "Not carried over (a quoted value spanning lines): ${_um_kept_skipped[*]} — copy them from $BACKUP by hand."
+	fi
+	if [ -n "$_um_kept_buffer" ]; then
+		{
+			printf '\n'
+			printf '# --- Kept from the previous .env (keys this installer does not manage) ---\n'
+			printf '%s' "$_um_kept_buffer"
+		} >> "$ENV_FILE"
+		info "Re-run kept ${#kept_keys[@]} settings this installer does not manage, from the previous .env: ${kept_keys[*]}"
+	fi
+	unset _um_kept_buffer _um_kept_keys_in_order _k _last _v
 fi
 
 # ─── Plugin install (v0.5: delegated to standalone scripts) ──────────────────
@@ -1736,27 +1854,46 @@ else
 		info "Pulling images from GHCR (set UM_BUILD_LOCAL=1 to build from source)..."
 	fi
 	_um_ensure_history_dir
+
+	# #400: would the image compose is about to start boot with this
+	# configuration? Asked while any running server is still serving; the check
+	# pulls or builds the image exactly as `up` would. A malformed checked knob
+	# (#399) used to surface as 180s of silent health polling.
+	info "Checking the configuration against the server image (nothing is started yet)."
+	info "  A first run pulls or builds the image here, which can take a few minutes."
+	_UM_ENVCHECK_RC=0
+	_um_check_env_in_image || _UM_ENVCHECK_RC=$?
+	case "$_UM_ENVCHECK_RC" in
+		0) ok "The server image accepts this configuration." ;;
+		1)
+			_um_envcheck_reason "$_UM_ENVCHECK_OUT" >&2
+			fail "The server would refuse to boot with this configuration (the FATAL line above says why).
+  It was NOT started, and a server already running is untouched.
+  Fix $ENV_FILE${BACKUP:+ (the previous one is $BACKUP)} and re-run." ;;
+		3) info "This server image predates the config check (bin/check-env.mjs); skipping it." ;;
+		*)
+			_um_envcheck_reason "$_UM_ENVCHECK_OUT" >&2
+			warn "Could not run the config check (exit $_UM_ENVCHECK_RC); starting anyway — the health check below still guards it." ;;
+	esac
+
 	_compose up -d 2>&1 | sed 's/^/[compose] /'
 
 	# ─── Poll /health until ready ─────────────────────────────────────────────────
-	# Cold-build on slow hardware (ARM Pi, constrained CI runners) can easily
-	# take >90s end-to-end before the server binds. Allow 180s to cover that.
 	# _um_port(), not raw $MEM0_MCP_PORT: the variable is the HOST side of the
 	# compose mapping and may carry a full binding (127.0.0.1:6337).
 	ENDPOINT="http://localhost:$(_um_port)/health"
-	info "Waiting for $ENDPOINT (up to 180s)..."
-
-	READY=0
-	for i in $(seq 1 90); do
-		if curl -sf --max-time 3 "$ENDPOINT" >/dev/null 2>&1; then
-			READY=1
-			break
+	info "Waiting for $ENDPOINT (up to $((_UM_POLL_ATTEMPTS * 2))s)..."
+	_UM_POLL_RC=0
+	_um_poll_health "$ENDPOINT" "$_UM_POLL_ATTEMPTS" || _UM_POLL_RC=$?
+	if [ "$_UM_POLL_RC" -ne 0 ]; then
+		if [ "$_UM_POLL_RC" -eq 2 ]; then
+			warn "The server is CRASH-LOOPING (docker reports it restarting); not waiting out the clock."
+		else
+			warn "Server did not become healthy within $((_UM_POLL_ATTEMPTS * 2))s."
 		fi
-		sleep 2
-	done
-
-	if [ "$READY" != "1" ]; then
-		warn "Server did not become healthy within 180s."
+		echo ""
+		echo "[install] --- memory-server logs (last 50 lines) ---"
+		_compose logs --tail 50 memory-server 2>&1 | sed 's/^/[logs] /' || true
 		warn "Check logs with: $(_compose_hint 'logs memory-server')"
 		exit 1
 	fi

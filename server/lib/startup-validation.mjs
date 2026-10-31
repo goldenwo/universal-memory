@@ -203,3 +203,60 @@ export function validateModelExists(env) {
     }
   }
 }
+
+/**
+ * Refuse boot when a provider slot names a provider that cannot serve it or has no key.
+ * The four slots resolve as the server resolves them (unset → openai, except the optional
+ * summarizer fallback); each must name a known provider that supports the slot's surface and,
+ * unless the provider needs no key (ollama), find one of the provider's key variables.
+ *
+ * @param {Record<string, string>} env - Environment variables
+ * @throws {Error} naming the first bad slot, its provider and what it lacks
+ */
+export function validateProviderSlots(env) {
+  const slots = [
+    { slot: 'UM_EMBEDDING_PROVIDER', surface: 'embeddings' },
+    { slot: 'UM_SUMMARIZER_PROVIDER', surface: 'summarizer' },
+    { slot: 'UM_SUMMARIZER_FALLBACK', surface: 'summarizer', optional: true },
+    { slot: 'UM_FACTS_PROVIDER', surface: 'facts' },
+  ];
+  for (const { slot, surface, optional } of slots) {
+    const rawName = env[slot];
+    if (optional && !rawName) continue;
+    const resolved = rawName || 'openai';
+    let provider;
+    try {
+      provider = getProvider(resolved);
+    } catch (err) {
+      throw new Error(`${slot}=${resolved} — ${err.message}`);
+    }
+    if (!provider.supports[surface]) {
+      throw new Error(
+        `${slot}=${resolved} does not support ${surface}; valid providers for ${surface}: ${supportingProviders(surface).join(', ')}`,
+      );
+    }
+    if (provider.requires.length === 0) continue; // ollama-style, no key needed
+    if (!provider.resolveApiKey(env)) {
+      throw new Error(`${slot}=${resolved} requires one of: ${provider.requires.join(', ')}`);
+    }
+  }
+}
+
+/**
+ * Every refusal the server makes from its environment at boot, in boot order. Throws the first
+ * as an Error whose message is the text of the server's FATAL line. The server
+ * (mem0-mcp-http.mjs) and bin/check-env.mjs both call this, so the installer's pre-start check
+ * (#400) refuses an environment exactly when the image would refuse to boot with it. Refusals
+ * that need Qdrant or the embedder (the collection stamp, the dimension probe) are not here.
+ *
+ * @param {Record<string, string>} env - Environment variables
+ * @throws {Error} the first refusal
+ */
+export function validateBootEnv(env) {
+  if (!env.MEM0_USER_ID) throw new Error('MEM0_USER_ID is required');
+  validateNumericKnobs(env);
+  validateProviderSupport(env);
+  validateModelExists(env);
+  validateProviderSlots(env);
+  validateOAuthConfig(env);
+}

@@ -242,8 +242,17 @@ detect_write_mode() {
   fi
   if [ -f "$SERVER_ENV_FILE" ]; then
     local v
-    v=$(sed -n 's/^[[:space:]]*UM_MCP_WRITE_ENABLED=//p' "$SERVER_ENV_FILE" \
-        | tail -1 | tr -d '"'\''[:space:]')
+    # As compose reads it (server/install.sh's _um_env_file_value): an optional
+    # `export `, spaces around `=`, the last line for the key; a quoted value is
+    # its contents, an unquoted one ends at a whitespace-separated `#` comment.
+    v=$(grep -E '^[[:space:]]*(export[[:space:]]+)?UM_MCP_WRITE_ENABLED[[:space:]]*=' "$SERVER_ENV_FILE" \
+        | tail -1 | cut -d= -f2- | tr -d '\r' || true)
+    v="${v#"${v%%[![:space:]]*}"}"
+    case "$v" in
+      \"*) v="${v#\"}"; v="${v%%\"*}" ;;
+      \'*) v="${v#\'}"; v="${v%%\'*}" ;;
+      *)   v="${v%%[[:space:]]#*}"; v="${v%"${v##*[![:space:]]}"}" ;;
+    esac
     if [ -n "$v" ]; then
       case "$v" in
         true|1) printf 'true env-file' ;;

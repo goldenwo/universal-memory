@@ -87,7 +87,7 @@ import { registry, httpRequestsTotal, httpRequestDurationSeconds, mcpToolCallsTo
 import { generateOpenAPISpec, generateCustomGPTActionsSpec } from './openapi.mjs';
 import { getEmbedderConfig } from './lib/embed.mjs';
 import { getFactsLlmConfig } from './lib/facts.mjs';
-import { validateSummarizerConfig, validateProviderSupport, validateModelExists, validateOAuthConfig, validateNumericKnobs } from './lib/startup-validation.mjs';
+import { validateSummarizerConfig, validateBootEnv } from './lib/startup-validation.mjs';
 import { protectedResourceMetadata, authorizationServerMetadata } from './lib/oauth/metadata.mjs';
 import { createStateStore } from './lib/oauth/state-store.mjs';
 import { createOAuthHandlers } from './lib/oauth/endpoints.mjs';
@@ -97,7 +97,7 @@ import { createCimdResolver } from './lib/oauth/cimd.mjs';
 import { buildRegistry } from './lib/oauth/idp/registry.mjs';
 import { makeOperatorPolicy } from './lib/oauth/idp/policy.mjs';
 import { isAllowedRegistrationRedirect } from './lib/oauth/redirects.mjs';
-import { getProvider, supportingProviders } from './lib/provider/registry.mjs';
+import { getProvider } from './lib/provider/registry.mjs';
 import { filterSystemDocs, filterSystemDocsByTopLevelId } from './lib/system-docs.mjs';
 import { createStampClient } from './lib/embedding-stamp.mjs';
 import { priceFor } from './lib/pricing.mjs';
@@ -262,92 +262,24 @@ function validateSafeName(field, value) {
   }
 }
 
-function requireEnv(name) {
-	const v = process.env[name];
-	if (!v) {
-		console.error(`[mem0-mcp] FATAL: ${name} is required`);
-		process.exit(1);
-	}
-	return v;
-}
-
-// When run as main, env vars must be set — fail fast. When imported for tests,
-// fall back to harmless defaults so the module loads (tests don't hit initMemory
-// and provide their own memoryClient mocks).
-const USER_ID = IS_MAIN ? requireEnv('MEM0_USER_ID') : (process.env.MEM0_USER_ID || 'test-user');
+// Run as main, the environment must pass every boot check before anything else starts:
+// validateBootEnv (lib/startup-validation.mjs) holds the list — the user id, the checked
+// knobs, provider support and models, provider keys, OAuth — and bin/check-env.mjs runs the
+// same list, so the installer's pre-start check refuses exactly what this refuses (#400).
 if (IS_MAIN) {
-  // A set-but-malformed checked knob (lib/checked-knobs.mjs) refuses boot (#321's rule): its
-  // reader would silently fall back to the default.
   try {
-    validateNumericKnobs(process.env);
+    validateBootEnv(process.env);
   } catch (err) {
     console.error(`[mem0-mcp] FATAL: ${err.message}`);
     process.exit(1);
-  }
-  // R9 mitigation (DE6): refuse unsupported (provider, surface) combos at startup
-  // BEFORE initMemory so e.g. UM_EMBEDDING_PROVIDER=anthropic is rejected with a
-  // helpful list of valid embedding providers. validateProviderSupport throws;
-  // catch and exit(1) per server convention.
-  try {
-    validateProviderSupport(process.env);
-  } catch (err) {
-    console.error(`[mem0-mcp] FATAL: ${err.message}`);
-    process.exit(1);
-  }
-  // Adv-5 mitigation (DE7): refuse models not in PRICING for the configured
-  // provider (e.g. UM_EMBEDDING_PROVIDER=google with UM_EMBEDDING_MODEL=
-  // text-embedding-3-small). Runs AFTER validateProviderSupport (provider
-  // first, model second). Ollama exempt — user-managed local pulls.
-  try {
-    validateModelExists(process.env);
-  } catch (err) {
-    console.error(`[mem0-mcp] FATAL: ${err.message}`);
-    process.exit(1);
-  }
-  // Validate that whatever providers the operator selected have their required keys,
-  // and that each provider supports the surface it's assigned to.
-  // This replaces the hard-coded requireEnv('OPENAI_API_KEY') check so that
-  // non-openai deployments (e.g., ollama-only, Phase F Path 3) are not blocked.
-  const surfaceMap = {
-    UM_EMBEDDING_PROVIDER: 'embeddings',
-    UM_SUMMARIZER_PROVIDER: 'summarizer',
-    UM_SUMMARIZER_FALLBACK: 'summarizer',
-    UM_FACTS_PROVIDER: 'facts',
-  };
-  for (const slot of ['UM_EMBEDDING_PROVIDER', 'UM_SUMMARIZER_PROVIDER', 'UM_SUMMARIZER_FALLBACK', 'UM_FACTS_PROVIDER']) {
-    const rawName = process.env[slot];
-    if (slot === 'UM_SUMMARIZER_FALLBACK' && !rawName) continue; // optional slot
-    const resolved = rawName || 'openai';
-    let provider;
-    try {
-      provider = getProvider(resolved);
-    } catch (err) {
-      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} — ${err.message}`);
-      process.exit(1);
-    }
-    // Capability check: fail fast if provider doesn't support the assigned surface
-    const surface = surfaceMap[slot];
-    if (!provider.supports[surface]) {
-      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} does not support ${surface}; valid providers for ${surface}: ${supportingProviders(surface).join(', ')}`);
-      process.exit(1);
-    }
-    if (provider.requires.length === 0) continue; // ollama-style, no key needed
-    if (!provider.resolveApiKey(process.env)) {
-      console.error(`[mem0-mcp] FATAL: ${slot}=${resolved} requires one of: ${provider.requires.join(', ')}`);
-      process.exit(1);
-    }
   }
   // R8 mitigation: log info when summarizer fallback is cross-provider; warn on legacy UM_SUMMARIZER.
   validateSummarizerConfig(process.env, getLogger());
-  // Gap-3 OAuth boot validation: refuse startup when UM_OAUTH_ENABLED=true
-  // but UM_PUBLIC_BASE_URL is missing or not a valid http/https URL.
-  try {
-    validateOAuthConfig(process.env);
-  } catch (err) {
-    console.error(`[mem0-mcp] FATAL: ${err.message}`);
-    process.exit(1);
-  }
 }
+
+// Imported for tests, the module falls back to a harmless user id (tests don't hit initMemory
+// and provide their own memoryClient mocks).
+const USER_ID = process.env.MEM0_USER_ID || 'test-user';
 
 // Read after the boot validation above, so a malformed value has already refused boot.
 const PORT = checkedKnob('MEM0_MCP_PORT');
