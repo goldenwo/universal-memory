@@ -112,6 +112,8 @@ COPY openapi.mjs ./
 COPY lib/ ./lib/
 COPY config/ ./config/
 COPY assets/ ./assets/
+# The installer's pre-start config check (#400) runs it inside this image.
+COPY bin/check-env.mjs ./bin/
 COPY entrypoint.sh ./
 RUN chmod +x ./entrypoint.sh
 EXPOSE 6335
