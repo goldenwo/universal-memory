@@ -571,6 +571,27 @@ if echo "$TPS_OUT" | grep -qx "SERVER-RAN" && echo "$TPS_OUT" | grep -qx "CLI-RA
 if [ -f "$TPS/server-stdin" ] && [ ! -s "$TPS/server-stdin" ]; then pass "T-PIPED-STDIN: the server step read none of the installer"; else fail "T-PIPED-STDIN: the server step read $(wc -c < "$TPS/server-stdin" 2>/dev/null || echo '?') bytes of the installer"; fi
 rm -rf "$TPS"
 
+# ─── T-TRUNCATED: a cut-off download runs nothing and fails ─────────────────
+# curl | bash runs whatever arrived. Cut inside the usage header, the script was
+# all comments: nothing ran and the install exited 0. Cut before the closing
+# line, everything but the group's `}` arrived; without the group that would
+# run every step.
+echo ""
+echo "=== T-TRUNCATED: a cut-off download runs nothing and exits non-zero ==="
+TTR=$(mktemp -d)
+make_stubs "$TTR/bin"
+mkdir -p "$TTR/repo/server" "$TTR/repo/installer" "$TTR/repo/.git"
+printf '#!/usr/bin/env bash\ntouch "%s/server-ran"\n' "$TTR" > "$TTR/repo/server/install.sh"
+TTR_SIZE=$(wc -c < "$INSTALLER" | tr -d ' ')
+TTR_LAST=$(tail -n 1 "$INSTALLER" | wc -c | tr -d ' ')
+for TTR_CUT in 1000 $((TTR_SIZE - TTR_LAST)); do
+  TTR_EXIT=0
+  head -c "$TTR_CUT" "$INSTALLER" | env PATH="$TTR/bin:/usr/bin:/bin" HOME="$TTR" OPENAI_API_KEY=sk-test \
+    UM_INSTALL_DIR="$TTR/repo" bash -s -- --server --yes > /dev/null 2>&1 || TTR_EXIT=$?
+  if [ "$TTR_EXIT" -ne 0 ] && [ ! -e "$TTR/server-ran" ]; then pass "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE runs nothing and exits $TTR_EXIT"; else fail "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE exited $TTR_EXIT (server step ran: $([ -e "$TTR/server-ran" ] && echo yes || echo no))"; fi
+done
+rm -rf "$TTR"
+
 # ─── T-SELF-CLONE: run from a clone, the installer uses that clone ───────────
 # INSTALL_DIR defaulted to ~/universal-memory, so `git clone ... /some/dir;
 # bash installer/install.sh` cloned (or pulled) a second copy there and ran its
