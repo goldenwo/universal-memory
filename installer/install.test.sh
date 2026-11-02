@@ -552,6 +552,25 @@ TSU_OUT=$(env PATH="$TSU/bin:/usr/bin:/bin" HOME="$TSU" OPENAI_API_KEY=sk-test U
 if [ "$(echo "$TSU_OUT" | grep -c "SUMMARIZER openai")" = 2 ]; then pass "T-SUMMARIZER: an explicit export wins"; else fail "T-SUMMARIZER: got $(echo "$TSU_OUT" | grep SUMMARIZER | tr '\n' ' ')"; fi
 rm -rf "$TSU"
 
+# ─── T-PIPED-STDIN: a step that reads stdin cannot take the piped installer ──
+# Under curl | bash -s, the installer's own text is bash's stdin, read as the
+# script runs. server/install.sh's config check (compose run) reads stdin, so it
+# took the rest of the installer: the plugin and CLI steps never ran, and the
+# install still exited 0 (found in the v1.30.1 Pi deploy, 2026-11-01).
+echo ""
+echo "=== T-PIPED-STDIN: a piped install runs every step when one reads stdin ==="
+TPS=$(mktemp -d)
+make_stubs "$TPS/bin"
+mkdir -p "$TPS/repo/server" "$TPS/repo/installer" "$TPS/repo/.git"
+printf '#!/usr/bin/env bash\ncat > "%s/server-stdin"\necho SERVER-RAN\n' "$TPS" > "$TPS/repo/server/install.sh"
+printf '#!/usr/bin/env bash\necho CLI-RAN\n' > "$TPS/repo/installer/install-cli.sh"
+# shellcheck disable=SC2002  # a pipe, not a file on stdin: curl | bash is the case
+TPS_OUT=$(cd "$TPS" && cat "$INSTALLER" | env PATH="$TPS/bin:/usr/bin:/bin" HOME="$TPS" OPENAI_API_KEY=sk-test \
+  UM_INSTALL_DIR="$TPS/repo" bash -s -- --server --cli --yes 2>&1) || true
+if echo "$TPS_OUT" | grep -qx "SERVER-RAN" && echo "$TPS_OUT" | grep -qx "CLI-RAN"; then pass "T-PIPED-STDIN: the CLI step runs after a server step that reads stdin"; else fail "T-PIPED-STDIN: a step was skipped (got: $(echo "$TPS_OUT" | tail -4 | tr '\n' ' '))"; fi
+if [ -f "$TPS/server-stdin" ] && [ ! -s "$TPS/server-stdin" ]; then pass "T-PIPED-STDIN: the server step read none of the installer"; else fail "T-PIPED-STDIN: the server step read $(wc -c < "$TPS/server-stdin" 2>/dev/null || echo '?') bytes of the installer"; fi
+rm -rf "$TPS"
+
 # ─── T-SELF-CLONE: run from a clone, the installer uses that clone ───────────
 # INSTALL_DIR defaulted to ~/universal-memory, so `git clone ... /some/dir;
 # bash installer/install.sh` cloned (or pulled) a second copy there and ran its

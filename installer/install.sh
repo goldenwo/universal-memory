@@ -25,6 +25,12 @@
 #   --no-path       Pass --no-path to CLI installer
 #   --dry-run       Print what would happen; do not run anything
 
+# The whole script is one brace group (closed on the last line), so bash reads
+# all of it before it runs any of it. Under curl | bash -s the script is bash's
+# stdin, read as it ran: a step that reads stdin (server/install.sh's compose
+# run did) took the rest, so the later steps never ran and the install still
+# exited 0. A download cut off part-way now runs nothing.
+{
 set -euo pipefail
 
 REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
@@ -589,3 +595,4 @@ fi
 if [[ $INSTALL_CLI -eq 1 ]]; then
   _delegate "installer/install-cli.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${CLI_ARGS[@]+"${CLI_ARGS[@]}"}
 fi
+} # the brace group opened at the top; keep it the last line
