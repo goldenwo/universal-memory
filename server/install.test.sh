@@ -2602,10 +2602,16 @@ _teof_run() {
 }
 # _teof_check <case> <way out> <dir> [VAR=value ...]: the install, with stdin at
 # its end, fails with the shared reason and <way out>.
+# --unreadable: stdin is open write-only instead (read fails with EBADF).
 _teof_check() {
+  local unreadable=0; if [ "$1" = "--unreadable" ]; then unreadable=1; shift; fi
   local name="$1" want="$2" t="$3"; shift 3
   local rc=0 out
-  out=$(_teof_run "$t" "$@" </dev/null) || rc=$?
+  if [ "$unreadable" = "1" ]; then
+    out=$(_teof_run "$t" "$@" 0>/dev/null) || rc=$?
+  else
+    out=$(_teof_run "$t" "$@" </dev/null) || rc=$?
+  fi
   assert_exit_nonzero "TEOF $name: exits non-zero" "$rc"
   assert_contains "TEOF $name: says stdin ended" "$out" "No answer to that prompt: stdin ended"
   assert_contains "TEOF $name: names the way out" "$out" "$want"
@@ -2647,6 +2653,38 @@ printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0
   UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1 >/dev/null 2>&1 || true
 assert_eq "TEOF: a last answer with no newline counts" \
   "$(grep -E '^MEM0_USER_ID=' "$T/server/.env" 2>/dev/null)" "MEM0_USER_ID=myns"
+
+# A stdin that cannot be read at all (nohup from a terminal reopens fd 0
+# write-only) fails read without assigning: the rejected key stayed in place and
+# the 401 loop validated it again forever, and an answer with no earlier value
+# died on `unbound variable`. This curl rejects the first key and accepts any
+# after it, so a regression ends instead of hanging.
+T="$TMPROOT/teof-ebadf-401"; _teof_setup "$T" 401
+mv "$T/bin/curl" "$T/bin/curl-401"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+d=$(dirname "$0")
+if [[ "$*" == *"openai.com"* ]]; then
+  echo probe >> "$d/openai-probes"
+  if [ "$(wc -l < "$d/openai-probes")" -gt 1 ]; then
+    if [[ "$*" == *"-w"* ]]; then printf 200; fi
+    exit 0
+  fi
+fi
+exec "$d/curl-401" "$@"
+FAKE
+chmod +x "$T/bin/curl"
+_teof_check --unreadable "unreadable stdin at the rejected key" \
+  "Export a valid UM_OPENAI_API_KEY and re-run with --yes." "$T" \
+  OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
+assert_eq "TEOF unreadable stdin at the rejected key: validated it once" \
+  "$(wc -l < "$T/bin/openai-probes" 2>/dev/null | tr -d ' ')" "1"
+
+T="$TMPROOT/teof-ebadf-env"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=testuser\n' > "$T/server/.env"
+_teof_check --unreadable "unreadable stdin at the existing .env" "Re-run with --yes to back up" "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_SKIP_KEY_VALIDATION=1
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

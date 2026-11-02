@@ -1241,11 +1241,15 @@ fi
 # terminal, so its stdin is already at its end, and a bare read then ended the
 # run under set -e with only the question on screen; with no answer this fails
 # with <way out> instead. An answer on a last line with no newline still counts.
+# <var> is emptied first: a read that cannot read at all (stdin open write-only,
+# as nohup leaves it) assigns nothing, and the 401 re-entry then took the
+# rejected key it still held for an answer and validated it again forever.
 # IFS is the caller's: prompt() and the key re-entry run `IFS= _um_read` to keep
 # the answer whole.
 _um_read() {
 	local _um_hide=
 	if [ "$1" = "-s" ]; then _um_hide=-s; shift; fi
+	printf -v "$1" '%s' ''
 	read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
 		echo >&2
 		fail "No answer to that prompt: stdin ended. $2 (From curl, pass flags as: curl ... | bash -s -- --yes)"
@@ -1421,7 +1425,7 @@ if [ -n "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ] \
 	fi
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
 		printf 'Continue with new UM_CONTAINER_USER? [y/N] ' >&2
-		_um_read _ans "Re-run with --yes to switch to $UM_CONTAINER_USER; to keep $_PRIOR_CONTAINER_USER, export UM_CONTAINER_USER=$_PRIOR_CONTAINER_USER and re-run with --yes."
+		_um_read _ans "To switch, export UM_CONTAINER_USER=$UM_CONTAINER_USER and re-run with --yes; to keep $_PRIOR_CONTAINER_USER, export UM_CONTAINER_USER=$_PRIOR_CONTAINER_USER and re-run with --yes."
 		case "$_ans" in [yY]*) ;; *) fail "Aborted by user." ;; esac
 	fi
 fi
