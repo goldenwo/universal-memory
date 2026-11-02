@@ -566,7 +566,8 @@ printf '#!/usr/bin/env bash\ncat > "%s/server-stdin"\necho SERVER-RAN\n' "$TPS" 
 printf '#!/usr/bin/env bash\necho CLI-RAN\n' > "$TPS/repo/installer/install-cli.sh"
 # shellcheck disable=SC2002  # a pipe, not a file on stdin: curl | bash is the case
 TPS_OUT=$(cd "$TPS" && cat "$INSTALLER" | env PATH="$TPS/bin:/usr/bin:/bin" HOME="$TPS" OPENAI_API_KEY=sk-test \
-  UM_INSTALL_DIR="$TPS/repo" bash -s -- --server --cli --yes 2>&1) || true
+  UM_INSTALL_DIR="$TPS/repo" bash -s -- --server --cli --yes 2>&1) && TPS_EXIT=0 || TPS_EXIT=$?
+if [ "$TPS_EXIT" -eq 0 ]; then pass "T-PIPED-STDIN: the piped install exits 0"; else fail "T-PIPED-STDIN: the piped install exited $TPS_EXIT"; fi
 if echo "$TPS_OUT" | grep -qx "SERVER-RAN" && echo "$TPS_OUT" | grep -qx "CLI-RAN"; then pass "T-PIPED-STDIN: the CLI step runs after a server step that reads stdin"; else fail "T-PIPED-STDIN: a step was skipped (got: $(echo "$TPS_OUT" | tail -4 | tr '\n' ' '))"; fi
 if [ -f "$TPS/server-stdin" ] && [ ! -s "$TPS/server-stdin" ]; then pass "T-PIPED-STDIN: the server step read none of the installer"; else fail "T-PIPED-STDIN: the server step read $(wc -c < "$TPS/server-stdin" 2>/dev/null || echo '?') bytes of the installer"; fi
 rm -rf "$TPS"
@@ -585,10 +586,12 @@ printf '#!/usr/bin/env bash\ntouch "%s/server-ran"\n' "$TTR" > "$TTR/repo/server
 TTR_SIZE=$(wc -c < "$INSTALLER" | tr -d ' ')
 TTR_LAST=$(tail -n 1 "$INSTALLER" | wc -c | tr -d ' ')
 for TTR_CUT in 1000 $((TTR_SIZE - TTR_LAST)); do
+  rm -f "$TTR/server-ran"
   TTR_EXIT=0
   head -c "$TTR_CUT" "$INSTALLER" | env PATH="$TTR/bin:/usr/bin:/bin" HOME="$TTR" OPENAI_API_KEY=sk-test \
-    UM_INSTALL_DIR="$TTR/repo" bash -s -- --server --yes > /dev/null 2>&1 || TTR_EXIT=$?
-  if [ "$TTR_EXIT" -ne 0 ] && [ ! -e "$TTR/server-ran" ]; then pass "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE runs nothing and exits $TTR_EXIT"; else fail "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE exited $TTR_EXIT (server step ran: $([ -e "$TTR/server-ran" ] && echo yes || echo no))"; fi
+    UM_INSTALL_DIR="$TTR/repo" bash -s -- --server --yes > /dev/null 2> "$TTR/err" || TTR_EXIT=$?
+  # The failure must be bash refusing to parse, not a launch error (126/127).
+  if [ "$TTR_EXIT" -ne 0 ] && grep -q "syntax error" "$TTR/err" && [ ! -e "$TTR/server-ran" ]; then pass "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE runs nothing and fails to parse (exit $TTR_EXIT)"; else fail "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE exited $TTR_EXIT (server step ran: $([ -e "$TTR/server-ran" ] && echo yes || echo no); stderr: $(head -1 "$TTR/err"))"; fi
 done
 rm -rf "$TTR"
 
