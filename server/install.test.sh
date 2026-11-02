@@ -2637,8 +2637,8 @@ assert_contains "TEOF existing install: says what --yes rewrites" "$TEOF_OUT" \
   "$TEOF_ENV_WARNING $T/server/.env from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them)"
 assert_contains "TEOF existing install: names the upgrade" "$TEOF_OUT" "/install.sh --upgrade"
 
-# The printed command runs as pasted from a checkout whose path has a space
-# (a Windows user name, say).
+# The upgrade command is printed shell-quoted, for a checkout whose path has a
+# space (a Windows user name, say).
 T="$TMPROOT/teof existing spaced"; _teof_setup "$T" 200
 printf 'MEM0_USER_ID=myns\n' > "$T/server/.env"
 _teof_check "existing install, spaced path" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
@@ -2728,15 +2728,11 @@ assert_contains "TEOF key with a trailing space: refused, not trimmed" "$TEOF_OU
 T="$TMPROOT/teof-yes-rewrites"; _teof_setup "$T" 200
 printf 'OPENAI_API_KEY=sk-kept\nMEM0_USER_ID=myns\nMEM0_MCP_PORT=6337\nUM_VAULT_DIR=%s\nUM_AUTH_TOKEN=tok-kept\n' \
   "$T/vault" > "$T/server/.env"
-# _SMOKE_HOME is --verify's scratch dir; one in the caller's environment is
-# not this run's, so the run's cleanup leaves it alone.
-mkdir -p "$T/not-ours"
 TEOF_RC=0
 env -i PATH="$T/bin:/usr/bin:/bin" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$T/plugins" \
-  SHELL=/bin/bash HOME="$T/home" UM_SKIP_KEY_VALIDATION=1 _SMOKE_HOME="$T/not-ours" \
+  SHELL=/bin/bash HOME="$T/home" UM_SKIP_KEY_VALIDATION=1 \
   bash "$T/server/install.sh" --yes </dev/null > "$T/install.out" 2>&1 || TEOF_RC=$?
 assert_exit_zero "TEOF --yes over a .env: exits 0" "$TEOF_RC"
-assert_file_exists "TEOF --yes over a .env: an inherited _SMOKE_HOME survives the run" "$T/not-ours"
 assert_eq "TEOF --yes over a .env: rewrites the settings it was warned about" \
   "$(grep -E '^(OPENAI_API_KEY|MEM0_USER_ID|MEM0_MCP_PORT|UM_VAULT_DIR|UM_AUTH_TOKEN)=' "$T/server/.env" | tr '\n' ' ')" \
   "OPENAI_API_KEY= MEM0_USER_ID=default MEM0_MCP_PORT=6335 UM_VAULT_DIR=$T/home/.um/vault UM_AUTH_TOKEN=tok-kept "
@@ -2786,7 +2782,9 @@ assert_not_contains "TEOF signal at a prompt: does not blame stdin" "$TEOF_OUT" 
 
 # The EXIT trap is what removes the key file when a signal ends the run. This
 # curl holds the key probe open long enough for the signal to land during it.
-T="$TMPROOT/teof-signal-key"; _teof_setup "$T" 200; mkdir -p "$T/tmp"
+# It removes nothing else: _SMOKE_HOME is --verify's scratch dir, and one in the
+# caller's environment is not this run's.
+T="$TMPROOT/teof-signal-key"; _teof_setup "$T" 200; mkdir -p "$T/tmp" "$T/not-ours"
 mv "$T/bin/curl" "$T/bin/curl-200"
 cat > "$T/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
@@ -2795,11 +2793,12 @@ exec "$(dirname "$0")/curl-200" "$@"
 FAKE
 chmod +x "$T/bin/curl"
 _teof_signal "$T" "$T/tmp" "Authorization" TMPDIR="$T/tmp" OPENAI_API_KEY=sk-testkey12345 \
-  MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
+  MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" _SMOKE_HOME="$T/not-ours"
 assert_eq "TEOF signal during the key probe: the key file was there first" "$TEOF_SEEN" "1"
 assert_eq "TEOF signal during the key probe: exits 130" "$TEOF_RC" "130"
 assert_eq "TEOF signal during the key probe: leaves no key file" \
   "$(grep -rlF Authorization "$T/tmp" 2>/dev/null)" ""
+assert_file_exists "TEOF signal during the key probe: an inherited _SMOKE_HOME survives" "$T/not-ours"
 
 # --verify stages a smoke HOME in a temp dir, and its smoke turn lands in the
 # vault's captures/install-verify; both go at the end of the run, and at a

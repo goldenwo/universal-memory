@@ -548,7 +548,7 @@ if [ "${1:-}" = "--verify" ]; then
   _SMOKE_HOME=$(mktemp -d 2>/dev/null || echo "")
   # The cleanup step below, also run on exit: a signal ends the run before it.
   # Set only here, once this run has made its own dir, and one rm, so a second
-  # signal cannot stop it halfway.
+  # TERM cannot stop it halfway.
   # shellcheck disable=SC2329  # invoked indirectly by the trap below
   _verify_cleanup() {
     rm -rf ${_SMOKE_HOME:+"$_SMOKE_HOME"} "$_VAULT/captures/install-verify" 2>/dev/null || true
@@ -649,7 +649,6 @@ print(json.dumps({
   # the install-verify project — remove it like the pre-#159 verify did. The
   # counters row + any already-indexed point are accepted best-effort residue.
   _verify_cleanup
-  trap _um_cleanup EXIT
   _vpass "cleanup" "removed smoke scratch dir + vault captures/install-verify"
 
   # ── versions ──────────────────────────────────────────────────────────────
@@ -856,7 +855,6 @@ if [ "${1:-}" = "--upgrade" ]; then
 		else
 			printf '\033[1;32m[upgrade]\033[0m %s\n' "Interrupted before the swap — your running server is untouched." >&2
 		fi
-		_um_cleanup
 		exit 130
 	}
 	trap _upg_on_interrupt INT TERM
@@ -1259,23 +1257,25 @@ fi
 # <var> is emptied first: a read that cannot read at all (stdin open write-only,
 # as nohup leaves it) assigns nothing, and the 401 re-entry then took the
 # rejected key it still held for an answer and validated it again forever.
-# With a .env in place, --yes alone is not a safe way out: it keeps the token,
-# the capture switches and the container user, and takes the rest from the
-# environment or the defaults, so an install's namespace, port and vault went
-# back to default, 6335 and ~/.um/vault. --upgrade is named only for an install
-# that was there before this run; one this run is creating has no stack yet.
+# Stdin ending is never an answer, not even the prompt's default: whether an
+# install with no terminal takes the defaults is the operator's product call
+# (#404), and --yes is how a run says so.
+# With a .env in place, --yes alone is not a safe way out: it takes the
+# namespace, port, vault and keys from the environment or the defaults (the
+# TEOF --yes case pins which). --upgrade is named only for an install that was
+# there before this run; one this run is creating has no stack yet.
 _um_read() {
-	local _um_hide='' _um_env_note='' IFS="$IFS"
+	local _um_hide='' _um_env_note='' _um_ifs="$IFS"
 	while :; do
 		case "$1" in
 			-s) _um_hide=-s; shift ;;
-			-w) IFS=''; shift ;;
+			-w) _um_ifs=''; shift ;;
 			*) break ;;
 		esac
 	done
 	local _um_way_out="$2"
 	printf -v "$1" '%s' ''
-	read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
+	IFS=$_um_ifs read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
 		if [ -f "$ENV_FILE" ]; then
 			_um_env_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first."
 			if [ "$UM_WAS_EXISTING_INSTALL" = "1" ]; then
@@ -1469,8 +1469,8 @@ _validate_openai_key() {
 	info "Validating OpenAI API key (GET /v1/models, 5s timeout)..."
 	local http_status
 	# C3: Write the auth header to a temp file so the key never appears in ps output.
-	# Path is registered in script-level _UM_TMP_KEYFILE so the EXIT/INT/TERM
-	# trap above guarantees cleanup on any exit path, including Ctrl-C.
+	# Path is registered in script-level _UM_TMP_KEYFILE so the EXIT trap above
+	# cleans it up on any exit path, Ctrl-C included (a signal exits 130).
 	_UM_TMP_KEYFILE=$(mktemp)
 	chmod 600 "$_UM_TMP_KEYFILE"
 	printf 'header = "Authorization: Bearer %s"\n' "$key" > "$_UM_TMP_KEYFILE"

@@ -57,8 +57,8 @@
 #
 # Refuses the push if any step fails. Exit 0 on success, 1 on failure.
 #
-# (Steps 3-5 catch regressions like Phase E.4's grep-pipefail, which only
-# install.test.sh's T18 idempotency check surfaced — smoke alone wouldn't.)
+# (Step 3 catches regressions like Phase E.4's grep-pipefail, which only
+# server/install.test.sh's T18 idempotency check surfaced — smoke alone wouldn't.)
 #
 # ─── Bypass ───────────────────────────────────────────────────────────────────
 #
@@ -184,9 +184,10 @@ if ! bash installer/install.test.sh; then
   exit 1
 fi
 
-# 6. Shellcheck — file list MIRRORS .github/workflows/smoke.yml exactly so
-#    a contributor running the gate locally catches the same warnings CI
-#    would catch. Drift between this list and CI's was an R2 finding.
+# 6. Shellcheck — the installer and core plugin files from .github/workflows/
+#    smoke.yml's list, at warning severity. CI also lints the um-alert,
+#    um-drain and skill scripts, at every severity. Drift between this list
+#    and CI's was an R2 finding.
 echo "[pre-push-phase-gate] (6/6) shellcheck --severity=warning (CI-parity list)" >&2
 if ! shellcheck --severity=warning \
      installer/*.sh installer/lib/*.sh \
