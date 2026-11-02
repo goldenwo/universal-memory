@@ -2780,46 +2780,68 @@ assert_eq "TEOF signal at a prompt: reached the prompt first" "$TEOF_SEEN" "1"
 assert_eq "TEOF signal at a prompt: exits 130" "$TEOF_RC" "130"
 assert_not_contains "TEOF signal at a prompt: does not blame stdin" "$TEOF_OUT" "stdin ended"
 
+# _teof_log_mktemp <dir>: a mktemp in <dir>/bin that writes each path it makes
+# to <dir>/bin/made. On macOS CI the files did not land in a TMPDIR a case set,
+# so the cases follow the paths themselves. _teof_made_left <dir> prints the
+# ones still there.
+_teof_log_mktemp() {
+  cat > "$1/bin/mktemp" <<'FAKE'
+#!/usr/bin/env bash
+p=$(/usr/bin/mktemp "$@") || exit
+echo "$p" >> "$(dirname "$0")/made"
+echo "$p"
+FAKE
+  chmod +x "$1/bin/mktemp"
+}
+_teof_made_left() {
+  local p left=''
+  while IFS= read -r p; do if [ -e "$p" ]; then left+="$p "; fi; done < "$1/bin/made"
+  printf '%s' "$left"
+}
+
 # The EXIT trap is what removes the key file when a signal ends the run. This
 # curl holds the key probe open long enough for the signal to land during it.
 # It removes nothing else: _SMOKE_HOME is --verify's scratch dir, and one in the
 # caller's environment is not this run's.
-T="$TMPROOT/teof-signal-key"; _teof_setup "$T" 200; mkdir -p "$T/tmp" "$T/not-ours"
+T="$TMPROOT/teof-signal-key"; _teof_setup "$T" 200; mkdir -p "$T/not-ours"; _teof_log_mktemp "$T"
 mv "$T/bin/curl" "$T/bin/curl-200"
 cat > "$T/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
-if [[ "$*" == *"openai.com"* ]]; then sleep 3; fi
+if [[ "$*" == *"openai.com"* ]]; then echo probing >> "$(dirname "$0")/probing"; sleep 3; fi
 exec "$(dirname "$0")/curl-200" "$@"
 FAKE
 chmod +x "$T/bin/curl"
-_teof_signal "$T" "$T/tmp" "Authorization" TMPDIR="$T/tmp" OPENAI_API_KEY=sk-testkey12345 \
+_teof_signal "$T" "$T/bin/probing" "probing" OPENAI_API_KEY=sk-testkey12345 \
   MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" _SMOKE_HOME="$T/not-ours"
-assert_eq "TEOF signal during the key probe: the key file was there first" "$TEOF_SEEN" "1"
+assert_eq "TEOF signal during the key probe: the probe was under way first" "$TEOF_SEEN" "1"
 assert_eq "TEOF signal during the key probe: exits 130" "$TEOF_RC" "130"
-assert_eq "TEOF signal during the key probe: leaves no key file" \
-  "$(grep -rlF Authorization "$T/tmp" 2>/dev/null)" ""
+assert_file_exists "TEOF signal during the key probe: a key file was made" "$T/bin/made"
+assert_eq "TEOF signal during the key probe: leaves no key file" "$(_teof_made_left "$T")" ""
 assert_file_exists "TEOF signal during the key probe: an inherited _SMOKE_HOME survives" "$T/not-ours"
 
 # --verify stages a smoke HOME in a temp dir, and its smoke turn lands in the
 # vault's captures/install-verify; both go at the end of the run, and at a
 # signal too. This py stands in for the first interpreter --verify probes once
 # the dir exists, and holds the run there.
-T="$TMPROOT/teof-signal-verify"; _teof_setup "$T" 200; mkdir -p "$T/tmp"
+T="$TMPROOT/teof-signal-verify"; _teof_setup "$T" 200; _teof_log_mktemp "$T"
 mkdir -p "$T/vault/captures/install-verify"; touch "$T/vault/captures/install-verify/turn.md"
 mkdir -p "$T/plugins/cache/universal-memory/universal-memory"
 cp -r "$PLUGIN_SRC" "$T/plugins/cache/universal-memory/universal-memory/1.8.1"
 cat > "$T/bin/py" <<'FAKE'
 #!/usr/bin/env bash
-if [ -n "$(ls -A "$TMPDIR" 2>/dev/null)" ]; then echo staged >> "$(dirname "$0")/py-ran"; fi
+d=$(dirname "$0")
+if [ -f "$d/made" ]; then
+  while IFS= read -r p; do if [ -d "$p" ]; then echo staged >> "$d/py-ran"; fi; done < "$d/made"
+fi
 sleep 3
 exit 1
 FAKE
 chmod +x "$T/bin/py"
-_teof_signal "$T" "$T/bin/py-ran" "staged" TMPDIR="$T/tmp" MEM0_MCP_PORT=6335 \
+_teof_signal "$T" "$T/bin/py-ran" "staged" MEM0_MCP_PORT=6335 \
   UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 -- --verify
 assert_eq "TEOF signal during --verify: the smoke dir was staged first" "$TEOF_SEEN" "1"
 assert_eq "TEOF signal during --verify: exits 130" "$TEOF_RC" "130"
-assert_eq "TEOF signal during --verify: leaves no smoke dir" "$(ls -A "$T/tmp")" ""
+assert_eq "TEOF signal during --verify: leaves no smoke dir" "$(_teof_made_left "$T")" ""
 assert_eq "TEOF signal during --verify: leaves no smoke capture in the vault" \
   "$(ls -A "$T/vault/captures" 2>/dev/null)" ""
 
