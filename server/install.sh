@@ -108,6 +108,8 @@ _um_cleanup() {
 		rm -f "$_UM_TMP_KEYFILE" 2>/dev/null || true
 		_UM_TMP_KEYFILE=""
 	fi
+	# --verify's staging HOME; its own end-of-run rm never runs after a signal.
+	if [ -n "${_SMOKE_HOME:-}" ]; then rm -rf "$_SMOKE_HOME" 2>/dev/null || true; fi
 }
 trap _um_cleanup EXIT
 # A signal ends the run (the EXIT trap still cleans up). A trap that only

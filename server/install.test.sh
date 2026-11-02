@@ -2704,23 +2704,104 @@ _teof_check --unreadable "unreadable stdin at the existing .env" "Re-run with --
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
   UM_SKIP_KEY_VALIDATION=1
 
+# A key with whitespace around it is refused, not trimmed: the hidden prompt
+# reads the whole line.
+T="$TMPROOT/teof-ws"; _teof_setup "$T" 200
+TEOF_RC=0
+TEOF_OUT=$(printf 'sk-testkey12345 \n' | _teof_run "$T" OPENAI_API_KEY= MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1) || TEOF_RC=$?
+assert_exit_nonzero "TEOF key with a trailing space: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF key with a trailing space: refused, not trimmed" "$TEOF_OUT" \
+  "OPENAI_API_KEY contains whitespace"
+
+# What the existing-install warning describes: a --yes re-run over a .env keeps
+# its token and takes the namespace, port, vault and key from the environment
+# or the defaults. If --yes ever keeps them, the warning goes with this case.
+T="$TMPROOT/teof-yes-rewrites"; _teof_setup "$T" 200
+printf 'OPENAI_API_KEY=sk-kept\nMEM0_USER_ID=myns\nMEM0_MCP_PORT=6337\nUM_VAULT_DIR=%s\nUM_AUTH_TOKEN=tok-kept\n' \
+  "$T/vault" > "$T/server/.env"
+TEOF_RC=0
+env -i PATH="$T/bin:/usr/bin:/bin" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$T/plugins" \
+  SHELL=/bin/bash HOME="$T/home" UM_SKIP_KEY_VALIDATION=1 \
+  bash "$T/server/install.sh" --yes </dev/null > "$T/install.out" 2>&1 || TEOF_RC=$?
+assert_exit_zero "TEOF --yes over a .env: exits 0" "$TEOF_RC"
+assert_eq "TEOF --yes over a .env: rewrites the settings it was warned about" \
+  "$(grep -E '^(OPENAI_API_KEY|MEM0_USER_ID|MEM0_MCP_PORT|UM_VAULT_DIR|UM_AUTH_TOKEN)=' "$T/server/.env" | tr '\n' ' ')" \
+  "OPENAI_API_KEY= MEM0_USER_ID=default MEM0_MCP_PORT=6335 UM_VAULT_DIR=$T/home/.um/vault UM_AUTH_TOKEN=tok-kept "
+
+# _teof_signal <dir> <path> <text> [VAR=value ...] [-- <install.sh args>]: the
+# install from <dir>, with stdin a fifo this shell holds open and never writes
+# to, gets TERM once <path> (a file, or a directory searched whole) contains
+# <text>. Sets TEOF_SEEN (1 if <text> showed up in time), TEOF_RC and TEOF_OUT.
+# TERM because a background job ignores SIGINT; a fifo because a helper
+# process holding a pipe would be one more pid to find and kill.
+_teof_signal() {
+  local t="$1" path="$2" text="$3" pid; shift 3
+  local vars=() args=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--" ]; then shift; args=("$@"); break; fi
+    vars+=("$1"); shift
+  done
+  mkfifo "$t/hold"
+  env PATH="$t/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$t/plugins" SHELL=/bin/bash \
+    HOME="$t/home" ${vars[@]+"${vars[@]}"} bash "$t/server/install.sh" ${args[@]+"${args[@]}"} \
+    < "$t/hold" > "$t/install.out" 2>&1 &
+  pid=$!
+  exec 4> "$t/hold"
+  TEOF_SEEN=0
+  for _ in $(seq 1 200); do
+    if grep -rqF "$text" "$path" 2>/dev/null; then TEOF_SEEN=1; break; fi
+    sleep 0.1
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+  TEOF_RC=0; wait "$pid" || TEOF_RC=$?
+  exec 4>&-
+  TEOF_OUT=$(cat "$t/install.out")
+}
+
 # A signal at a prompt stops the install. The INT/TERM trap only cleaned up, so
 # the interrupted read failed like an empty stdin and the run blamed stdin and
-# offered --yes. stdin here is a pipe nothing writes to, so the prompt waits.
-# (TERM: a background job ignores SIGINT.)
+# offered --yes.
 T="$TMPROOT/teof-signal"; _teof_setup "$T" 200
-exec 3< <(sleep 60)
-TEOF_HOLD=$!
-env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$T/plugins" SHELL=/bin/bash \
-  HOME="$T/home" OPENAI_API_KEY= bash "$T/server/install.sh" <&3 > "$T/install.out" 2>&1 &
-TEOF_PID=$!
-exec 3<&-
-for _ in $(seq 1 200); do grep -q 'OpenAI API key' "$T/install.out" 2>/dev/null && break; sleep 0.1; done
-kill -TERM "$TEOF_PID" 2>/dev/null || true
-TEOF_RC=0; wait "$TEOF_PID" || TEOF_RC=$?
-kill "$TEOF_HOLD" 2>/dev/null || true
+_teof_signal "$T" "$T/install.out" "OpenAI API key (input hidden)" OPENAI_API_KEY=
+assert_eq "TEOF signal at a prompt: reached the prompt first" "$TEOF_SEEN" "1"
 assert_eq "TEOF signal at a prompt: exits 130" "$TEOF_RC" "130"
-assert_not_contains "TEOF signal at a prompt: does not blame stdin" "$(cat "$T/install.out")" "stdin ended"
+assert_not_contains "TEOF signal at a prompt: does not blame stdin" "$TEOF_OUT" "stdin ended"
+
+# The EXIT trap is what removes the key file when a signal ends the run. This
+# curl holds the key probe open long enough for the signal to land during it.
+T="$TMPROOT/teof-signal-key"; _teof_setup "$T" 200; mkdir -p "$T/tmp"
+mv "$T/bin/curl" "$T/bin/curl-200"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "$*" == *"openai.com"* ]]; then sleep 3; fi
+exec "$(dirname "$0")/curl-200" "$@"
+FAKE
+chmod +x "$T/bin/curl"
+_teof_signal "$T" "$T/tmp" "Authorization" TMPDIR="$T/tmp" OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
+assert_eq "TEOF signal during the key probe: the key file was there first" "$TEOF_SEEN" "1"
+assert_eq "TEOF signal during the key probe: exits 130" "$TEOF_RC" "130"
+assert_eq "TEOF signal during the key probe: leaves no key file" \
+  "$(grep -rlF Authorization "$T/tmp" 2>/dev/null)" ""
+
+# --verify stages a smoke HOME in a temp dir. This py stands in for the first
+# interpreter --verify probes once that dir exists, and holds the run there.
+T="$TMPROOT/teof-signal-verify"; _teof_setup "$T" 200; mkdir -p "$T/tmp"
+mkdir -p "$T/plugins/cache/universal-memory/universal-memory"
+cp -r "$PLUGIN_SRC" "$T/plugins/cache/universal-memory/universal-memory/1.8.1"
+cat > "$T/bin/py" <<'FAKE'
+#!/usr/bin/env bash
+if [ -n "$(ls -A "$TMPDIR" 2>/dev/null)" ]; then echo staged >> "$(dirname "$0")/py-ran"; fi
+sleep 3
+exit 1
+FAKE
+chmod +x "$T/bin/py"
+_teof_signal "$T" "$T/bin/py-ran" "staged" TMPDIR="$T/tmp" MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 -- --verify
+assert_eq "TEOF signal during --verify: the smoke dir was staged first" "$TEOF_SEEN" "1"
+assert_eq "TEOF signal during --verify: exits 130" "$TEOF_RC" "130"
+assert_eq "TEOF signal during --verify: leaves no smoke dir" "$(ls -A "$T/tmp")" ""
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
