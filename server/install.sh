@@ -109,7 +109,11 @@ _um_cleanup() {
 		_UM_TMP_KEYFILE=""
 	fi
 }
-trap _um_cleanup EXIT INT TERM
+trap _um_cleanup EXIT
+# A signal ends the run (the EXIT trap still cleans up). A trap that only
+# cleaned up let the interrupted command fail and the run carry on from there:
+# Ctrl-C at a prompt was reported as stdin ending, with a --yes way out.
+trap 'exit 130' INT TERM
 
 # ─── Shared helpers for the sole-argument modes (--verify / --upgrade) ───────
 # Both modes probe an already-running install, so both need the same two
@@ -542,6 +546,14 @@ if [ "${1:-}" = "--verify" ]; then
   # the in-container node + better-sqlite3 DELETE idiom (#267 spec D4/§14).
   _HOOK_SCRIPT="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/stop.sh"
   _SMOKE_HOME=$(mktemp -d 2>/dev/null || echo "")
+  # The cleanup step below, also run on exit: a signal ends the run before it.
+  # Set only here, once this run has made its own dir, and one rm, so a second
+  # TERM cannot stop it halfway.
+  # shellcheck disable=SC2329  # invoked indirectly by the trap below
+  _verify_cleanup() {
+    rm -rf ${_SMOKE_HOME:+"$_SMOKE_HOME"} "$_VAULT/captures/install-verify" 2>/dev/null || true
+  }
+  trap '_um_cleanup; _verify_cleanup' EXIT
 
   # Same interpreter probe as the hooks' um_find_python: bare python3/python
   # on Windows are often Store app-execution-alias stubs; only a candidate
@@ -633,11 +645,10 @@ print(json.dumps({
   fi
 
   # ── cleanup ───────────────────────────────────────────────────────────────
-  if [ -n "$_SMOKE_HOME" ]; then rm -rf "$_SMOKE_HOME" 2>/dev/null || true; fi
   # The POSTed smoke turn also lands server-side in the vault raw capture for
   # the install-verify project — remove it like the pre-#159 verify did. The
   # counters row + any already-indexed point are accepted best-effort residue.
-  rm -rf "$_VAULT/captures/install-verify" 2>/dev/null || true
+  _verify_cleanup
   _vpass "cleanup" "removed smoke scratch dir + vault captures/install-verify"
 
   # ── versions ──────────────────────────────────────────────────────────────
@@ -711,6 +722,12 @@ fi
 #     mounts, network and env. Hand-rolling `docker run` is precisely what
 #     turned the incident's recovery into a second outage.
 if [ "${1:-}" = "--upgrade" ]; then
+	# Nothing here may read the caller's stdin: from a deploy script piped to a
+	# shell (ssh host 'bash -s' < deploy.sh) it is the rest of that script, and
+	# compose reads it whenever it has a question and no terminal. Compose
+	# v5.0.0's `up -d` asked whether to recreate a changed named volume and took
+	# `echo N` from such a script, which went on to run `EXT-LINE-RAN`.
+	exec </dev/null
 	_uinfo() { printf '\033[1;34m[upgrade]\033[0m %s\n' "$*"; }
 	_uok()   { printf '\033[1;32m[upgrade]\033[0m %s\n' "$*"; }
 	_uwarn() { printf '\033[1;33m[upgrade]\033[0m %s\n' "$*"; }
@@ -838,7 +855,6 @@ if [ "${1:-}" = "--upgrade" ]; then
 		else
 			printf '\033[1;32m[upgrade]\033[0m %s\n' "Interrupted before the swap — your running server is untouched." >&2
 		fi
-		_um_cleanup
 		exit 130
 	}
 	trap _upg_on_interrupt INT TERM
@@ -1230,6 +1246,47 @@ if [ -n "${HOME:-}" ]; then
 fi
 
 # ─── Collect required values ─────────────────────────────────────────────────
+# _um_read [-s] [-w] <var> <way out>: every prompt reads its answer into <var>
+# here (-s hides it; -w keeps the whole line, as a value needs, where a choice
+# is trimmed like a bare read). A piped install (`curl ... | bash` with no
+# --yes) has no terminal, so its stdin is already at its end, and a bare read
+# then ended the run under set -e with only the question on screen; with no
+# answer this fails with <way out> instead. An answer on a last line with no
+# newline still counts. <way out> is read on every call, so a call without one
+# fails the first time it runs, not only at EOF.
+# <var> is emptied first: a read that cannot read at all (stdin open write-only,
+# as nohup leaves it) assigns nothing, and the 401 re-entry then took the
+# rejected key it still held for an answer and validated it again forever.
+# Stdin ending is never an answer, not even the prompt's default: whether an
+# install with no terminal takes the defaults is the operator's product call
+# (#404), and --yes is how a run says so.
+# With a .env in place, --yes alone is not a safe way out: it takes the
+# namespace, port, vault and keys from the environment or the defaults (the
+# TEOF --yes case pins which). --upgrade is named only for an install that was
+# there before this run; one this run is creating has no stack yet.
+_um_read() {
+	local _um_hide='' _um_env_note='' _um_ifs="$IFS"
+	while :; do
+		case "$1" in
+			-s) _um_hide=-s; shift ;;
+			-w) _um_ifs=''; shift ;;
+			*) break ;;
+		esac
+	done
+	local _um_way_out="$2"
+	printf -v "$1" '%s' ''
+	IFS=$_um_ifs read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
+		if [ -f "$ENV_FILE" ]; then
+			_um_env_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first."
+			if [ "$UM_WAS_EXISTING_INSTALL" = "1" ]; then
+				_um_env_note+=" To upgrade this install instead, run: bash $(printf '%q' "$SCRIPT_DIR/install.sh") --upgrade"
+			fi
+		fi
+		echo >&2
+		fail "No answer to that prompt: stdin ended. $_um_way_out (From curl, pass flags as: curl ... | bash -s -- --yes)$_um_env_note"
+	}
+}
+
 prompt() {
 	# $1=var name, $2=description, $3=default (optional), $4=secret (1=silent input)
 	local var="$1" desc="$2" default="${3:-}" secret="${4:-0}"
@@ -1240,15 +1297,19 @@ prompt() {
 		return
 	fi
 
+	# --yes answers every prompt after this one too; only a value with no
+	# default has to come from the environment.
+	local way_out="Re-run with --yes to take the defaults (export $var first to choose your own)."
+	[ -n "$default" ] || way_out="Export $var and re-run with --yes."
 	local val=""
 	while [ -z "$val" ]; do
 		if [ "$secret" = "1" ]; then
 			printf '%s%s: ' "$desc" "${default:+ [default: $default]}" >&2
-			IFS= read -rs val
+			_um_read -w -s val "$way_out"
 			echo >&2
 		else
 			printf '%s%s: ' "$desc" "${default:+ [default: $default]}" >&2
-			IFS= read -r val
+			_um_read -w val "$way_out"
 		fi
 		[ -z "$val" ] && [ -n "$default" ] && val="$default"
 		if [ -z "$val" ]; then
@@ -1395,7 +1456,7 @@ if [ -n "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ] \
 	fi
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
 		printf 'Continue with new UM_CONTAINER_USER? [y/N] ' >&2
-		read -r _ans
+		_um_read _ans "To switch, export UM_CONTAINER_USER=$UM_CONTAINER_USER and re-run with --yes; to keep $_PRIOR_CONTAINER_USER, export UM_CONTAINER_USER=$_PRIOR_CONTAINER_USER and re-run with --yes."
 		case "$_ans" in [yY]*) ;; *) fail "Aborted by user." ;; esac
 	fi
 fi
@@ -1408,8 +1469,8 @@ _validate_openai_key() {
 	info "Validating OpenAI API key (GET /v1/models, 5s timeout)..."
 	local http_status
 	# C3: Write the auth header to a temp file so the key never appears in ps output.
-	# Path is registered in script-level _UM_TMP_KEYFILE so the EXIT/INT/TERM
-	# trap above guarantees cleanup on any exit path, including Ctrl-C.
+	# Path is registered in script-level _UM_TMP_KEYFILE so the EXIT trap above
+	# cleans it up on any exit path, Ctrl-C included (a signal exits 130).
 	_UM_TMP_KEYFILE=$(mktemp)
 	chmod 600 "$_UM_TMP_KEYFILE"
 	printf 'header = "Authorization: Bearer %s"\n' "$key" > "$_UM_TMP_KEYFILE"
@@ -1443,7 +1504,7 @@ else
 			fi
 			warn "OpenAI API rejected this key (401). Please re-enter."
 			printf 'UM_OPENAI_API_KEY (input hidden): ' >&2
-			IFS= read -rs _key_to_validate
+			_um_read -w -s _key_to_validate "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
 			echo >&2
 			[ -z "$_key_to_validate" ] && fail "Empty key — aborting."
 		done
@@ -1466,7 +1527,7 @@ if [ -f "$ENV_FILE" ]; then
 		ok "Existing .env backed up to $(basename "$BACKUP")."
 	else
 		printf '%s exists. [O]verwrite, [B]ackup-then-overwrite, or [A]bort? [B] ' "$ENV_FILE" >&2
-		read -r CHOICE
+		_um_read CHOICE "Re-run with --yes to back up $ENV_FILE and overwrite it."
 		CHOICE="${CHOICE:-B}"
 		case "$CHOICE" in
 			[Oo]*) ;;
@@ -1822,7 +1883,7 @@ _append_to_profile() {
 	# left exactly as it is, and the block (which sets no key) cannot clash with it.
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
 		printf 'Add universal-memory settings (UM_SUMMARIZER, UM_SERVER_URL, um on PATH) to %s? [Y/n] ' "$profile" >&2
-		read -r _ans
+		_um_read _ans "Re-run with --yes to add the settings to $profile."
 		_ans="${_ans:-Y}"
 		[[ "$_ans" =~ ^[Nn] ]] && { info "Shell profile update skipped — add export UM_SUMMARIZER='$summarizer' manually if you want it."; return; }
 	fi

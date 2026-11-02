@@ -937,6 +937,7 @@ fi
 #   FAKE_NO_CONTAINER  1 ⇒ `compose ps -q` returns nothing (stack is down)
 #   FAKE_OLD_ID        image ID reported for the running container
 #   FAKE_OLD_TAG       image tag reported for the running container
+#   FAKE_READ_STDIN    1 ⇒ every call reads its stdin, as compose's prompts do
 make_fake_docker_upgrade() {
   local dest="$1"
   mkdir -p "$dest"
@@ -947,6 +948,7 @@ if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
   printf 'ARGS=%s UM_IMAGE=%s UM_VERSION=%s\n' \
     "$args" "${UM_IMAGE:-}" "${UM_VERSION:-}" >> "$FAKE_DOCKER_LOG"
 fi
+if [ "${FAKE_READ_STDIN:-0}" = "1" ]; then cat > /dev/null; fi
 case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
@@ -958,8 +960,6 @@ if [[ "$args" == compose*" run "*"memory-server"* ]]; then
   if [ -n "${FAKE_RUN_SAW_DIR:-}" ]; then
     if [ -d "${FAKE_HISTORY_DIR:-}" ]; then echo yes; else echo no; fi > "$FAKE_RUN_SAW_DIR"
   fi
-  # FAKE_RUN_STDIN: append what each compose run was handed on stdin; compose run reads it.
-  if [ -n "${FAKE_RUN_STDIN:-}" ]; then cat >> "$FAKE_RUN_STDIN"; fi
   if [ "${FAKE_ENVCHECK_RC:-0}" = "1" ]; then
     echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2
   fi
@@ -2384,6 +2384,7 @@ done
 #                       line), 3 the image has no bin/check-env.mjs, other: docker
 #                       itself failed
 #   FAKE_RESTART_COUNT  RestartCount of the memory-server container
+#   FAKE_RUN_STDIN      file the check appends its stdin to (compose run reads it)
 make_fake_docker_envcheck() {
   local dest="$1"
   mkdir -p "$dest"
@@ -2396,6 +2397,7 @@ case "$args" in
   info|*" info"*)      echo "{}"; exit 0 ;;
 esac
 if [[ "$args" == compose*" run "*"memory-server"* ]]; then
+  if [ -n "${FAKE_RUN_STDIN:-}" ]; then cat >> "$FAKE_RUN_STDIN"; fi
   case "${FAKE_ENVCHECK_RC:-0}" in
     0) echo "[check-env] ok: the server accepts this environment" ;;
     1) echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2 ;;
@@ -2546,19 +2548,302 @@ assert_eq "TCE7: the history dir existed when the check ran" "$(cat "$TCE7/run-s
 
 # A deploy script piped to a shell (ssh host 'bash -s' < deploy.sh) hands
 # install.sh that script as stdin. compose run reads stdin, so the check took
-# the rest of the deploy script (#403).
+# the rest of the deploy script (#403). --upgrade closes its stdin outright
+# (TCE9); an install keeps stdin for its prompts, so there the check's own
+# redirect is what holds.
 echo ""
-echo "=== TCE8: no compose run reads the caller's stdin ==="
-TCE8="$TMPROOT/tce8"
-mkdir -p "$TCE8/server"
-make_fakebin "$TCE8/bin" 200
-make_fake_docker_upgrade "$TCE8/bin"
-TCE8_SH=$(make_isolated_server "$TCE8/server")
+echo "=== TCE8: an install's config check reads none of the caller's stdin ==="
+T="$TMPROOT/tce8"; _ce_setup "$T"
 TCE8_EXIT=0
-run_upgrade "$TCE8/bin" "$TCE8_SH" "$TCE8/docker.log" \
-  FAKE_RUN_STDIN="$TCE8/run-stdin" -- --upgrade <<< 'echo LEFT-FOR-THE-CALLER' > "$TCE8/upgrade.out" || TCE8_EXIT=$?
-assert_exit_zero "TCE8: --upgrade exits 0" "$TCE8_EXIT"
-assert_eq "TCE8: no compose run read the caller's stdin" "$(wc -c < "$TCE8/run-stdin" 2>/dev/null | tr -d ' ')" "0"
+_ce_install "$T" FAKE_RUN_STDIN="$T/run-stdin" <<< 'echo LEFT-FOR-THE-CALLER' > "$T/install.out" || TCE8_EXIT=$?
+assert_exit_zero "TCE8: install exits 0" "$TCE8_EXIT"
+assert_eq "TCE8: the check read none of the caller's stdin" "$(wc -c < "$T/run-stdin" 2>/dev/null | tr -d ' ')" "0"
+
+# compose up -d asks before it recreates a named volume whose configuration
+# changed (a host override can declare one), and with no terminal it reads the
+# answer from stdin: compose v5.0.0 took `echo N` from a deploy script piped to
+# `bash -s`, which then ran `EXT-LINE-RAN`. Compose's prompts are not a fixed
+# list, so --upgrade hands no command the caller's stdin, and here every docker
+# call reads whatever it is handed.
+echo ""
+echo "=== TCE9: --upgrade leaves the caller's stdin unread ==="
+TCE9="$TMPROOT/tce9"
+mkdir -p "$TCE9/server"
+make_fakebin "$TCE9/bin" 200
+make_fake_docker_upgrade "$TCE9/bin"
+TCE9_SH=$(make_isolated_server "$TCE9/server")
+TCE9_EXIT=0
+{
+  run_upgrade "$TCE9/bin" "$TCE9_SH" "$TCE9/docker.log" FAKE_READ_STDIN=1 -- --upgrade \
+    > "$TCE9/upgrade.out" || TCE9_EXIT=$?
+  cat > "$TCE9/left"
+} <<< 'echo LEFT-FOR-THE-CALLER'
+assert_exit_zero "TCE9: --upgrade exits 0" "$TCE9_EXIT"
+assert_eq "TCE9: the caller's stdin is left for the caller" "$(cat "$TCE9/left")" "echo LEFT-FOR-THE-CALLER"
+
+# ─── TEOF: a prompt with nothing on stdin says what to do instead ────────────
+# `curl ... | bash` with no flags installs everything without --yes, so
+# server/install.sh asks its questions with stdin already at its end. A bare
+# `read` then failed under set -e: exit 1, the question on screen, no reason.
+# Each prompt now fails with a way out; an answer on a last line with no newline
+# still counts.
+echo ""
+echo "=== TEOF: a prompt with no answer on stdin fails with a way out ==="
+# _teof_setup <dir> <openai_status>: a fresh install tree.
+_teof_setup() {
+  mkdir -p "$1/vault" "$1/plugins" "$1/home"; touch "$1/home/.bashrc"
+  make_fakebin "$1/bin" "$2"; make_isolated_server "$1/server" >/dev/null
+}
+# _teof_run <dir> [VAR=value ...]: an interactive install from <dir>, on the caller's stdin.
+_teof_run() {
+  local t="$1"; shift
+  run_install "$t/bin" "$t/server/install.sh" \
+    CLAUDE_PLUGINS_DIR="$t/plugins" SHELL=/bin/bash HOME="$t/home" "$@"
+}
+# _teof_check <case> <way out> <dir> [VAR=value ...]: the install, with stdin at
+# its end, fails with the shared reason and <way out>. TEOF_OUT keeps its output.
+# --unreadable: stdin is open write-only instead (read fails with EBADF).
+_teof_check() {
+  local unreadable=0; if [ "$1" = "--unreadable" ]; then unreadable=1; shift; fi
+  local name="$1" want="$2" t="$3"; shift 3
+  local rc=0
+  if [ "$unreadable" = "1" ]; then
+    TEOF_OUT=$(_teof_run "$t" "$@" 0>/dev/null) || rc=$?
+  else
+    TEOF_OUT=$(_teof_run "$t" "$@" </dev/null) || rc=$?
+  fi
+  assert_exit_nonzero "TEOF $name: exits non-zero" "$rc"
+  assert_contains "TEOF $name: says stdin ended" "$TEOF_OUT" "No answer to that prompt: stdin ended"
+  assert_contains "TEOF $name: names the way out" "$TEOF_OUT" "$want"
+  assert_contains "TEOF $name: says where a piped install takes --yes" "$TEOF_OUT" "| bash -s -- --yes"
+}
+# A --yes re-run takes most settings from the environment or the defaults, so
+# with a .env in place every way out says what --yes would rewrite in it.
+TEOF_ENV_WARNING="--yes rewrites most of the settings in"
+
+# Every way out ends in --yes: a re-run that answers only this prompt stops at
+# the next one.
+T="$TMPROOT/teof-key"; _teof_setup "$T" 200
+_teof_check "hidden key prompt" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_not_contains "TEOF hidden key prompt: a first install has no .env to warn about" \
+  "$TEOF_OUT" "$TEOF_ENV_WARNING"
+
+# An existing install's namespace, port and vault went back to default, 6335
+# and ~/.um/vault when its operator took the way out as given.
+T="$TMPROOT/teof-existing"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=myns\nMEM0_MCP_PORT=6337\nUM_VAULT_DIR=%s\n' "$T/vault" > "$T/server/.env"
+_teof_check "existing install" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_contains "TEOF existing install: says what --yes rewrites" "$TEOF_OUT" \
+  "$TEOF_ENV_WARNING $T/server/.env from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them)"
+assert_contains "TEOF existing install: names the upgrade" "$TEOF_OUT" "/install.sh --upgrade"
+
+# The upgrade command is printed shell-quoted, for a checkout whose path has a
+# space (a Windows user name, say).
+T="$TMPROOT/teof existing spaced"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=myns\n' > "$T/server/.env"
+_teof_check "existing install, spaced path" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_contains "TEOF existing install, spaced path: the upgrade command quotes the path" "$TEOF_OUT" \
+  "run: bash $(printf '%q' "$T/server/install.sh") --upgrade"
+
+T="$TMPROOT/teof-ns"; _teof_setup "$T" 200
+_teof_check "plain prompt" "Re-run with --yes to take the defaults (export MEM0_USER_ID first to choose your own)." "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=
+
+T="$TMPROOT/teof-cu"; _teof_setup "$T" 200
+printf 'UM_CONTAINER_USER=1001:1001\n' > "$T/server/.env"
+_teof_check "container user change" "to keep 1001:1001, export UM_CONTAINER_USER=1001:1001 and re-run with --yes." "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_CONTAINER_USER=1002:1002 UM_SKIP_KEY_VALIDATION=1
+
+T="$TMPROOT/teof-401"; _teof_setup "$T" 401
+_teof_check "rejected key" "Export a valid UM_OPENAI_API_KEY and re-run with --yes." "$T" \
+  OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
+
+T="$TMPROOT/teof-env"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=testuser\n' > "$T/server/.env"
+_teof_check "existing .env" "Re-run with --yes to back up" "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_SKIP_KEY_VALIDATION=1
+
+T="$TMPROOT/teof-profile"; _teof_setup "$T" 200
+_teof_check "shell profile" "Re-run with --yes to add the settings to $T/home/.bashrc." "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_SKIP_KEY_VALIDATION=1
+# The .env this run wrote is one a --yes re-run rewrites too, but this run
+# started no stack, so there is nothing for --upgrade to upgrade.
+assert_contains "TEOF shell profile: warns about the .env this run wrote" "$TEOF_OUT" "$TEOF_ENV_WARNING"
+assert_not_contains "TEOF shell profile: a first install is not sent to --upgrade" "$TEOF_OUT" "--upgrade"
+
+T="$TMPROOT/teof-last"; _teof_setup "$T" 200
+printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1 >/dev/null 2>&1 || true
+assert_eq "TEOF: a last answer with no newline counts" \
+  "$(grep -E '^MEM0_USER_ID=' "$T/server/.env" 2>/dev/null)" "MEM0_USER_ID=myns"
+
+# A stdin that cannot be read at all (nohup from a terminal reopens fd 0
+# write-only) fails read without assigning: the rejected key stayed in place and
+# the 401 loop validated it again forever, and an answer with no earlier value
+# died on `unbound variable`. This curl rejects the first key and accepts any
+# after it, so a regression ends instead of hanging.
+T="$TMPROOT/teof-ebadf-401"; _teof_setup "$T" 401
+mv "$T/bin/curl" "$T/bin/curl-401"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+d=$(dirname "$0")
+if [[ "$*" == *"openai.com"* ]]; then
+  echo probe >> "$d/openai-probes"
+  if [ "$(wc -l < "$d/openai-probes")" -gt 1 ]; then
+    if [[ "$*" == *"-w"* ]]; then printf 200; fi
+    exit 0
+  fi
+fi
+exec "$d/curl-401" "$@"
+FAKE
+chmod +x "$T/bin/curl"
+_teof_check --unreadable "unreadable stdin at the rejected key" \
+  "Export a valid UM_OPENAI_API_KEY and re-run with --yes." "$T" \
+  OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
+assert_eq "TEOF unreadable stdin at the rejected key: validated it once" \
+  "$(wc -l < "$T/bin/openai-probes" 2>/dev/null | tr -d ' ')" "1"
+
+T="$TMPROOT/teof-ebadf-env"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=testuser\n' > "$T/server/.env"
+_teof_check --unreadable "unreadable stdin at the existing .env" "Re-run with --yes to back up" "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_SKIP_KEY_VALIDATION=1
+
+# A key with whitespace around it is refused, not trimmed: the hidden prompt
+# reads the whole line.
+T="$TMPROOT/teof-ws"; _teof_setup "$T" 200
+TEOF_RC=0
+TEOF_OUT=$(printf 'sk-testkey12345 \n' | _teof_run "$T" OPENAI_API_KEY= MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1) || TEOF_RC=$?
+assert_exit_nonzero "TEOF key with a trailing space: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF key with a trailing space: refused, not trimmed" "$TEOF_OUT" \
+  "OPENAI_API_KEY contains whitespace"
+
+# What the existing-install warning describes: a --yes re-run over a .env keeps
+# its token and takes the namespace, port, vault and key from the environment
+# or the defaults. If --yes ever keeps them, the warning goes with this case.
+T="$TMPROOT/teof-yes-rewrites"; _teof_setup "$T" 200
+printf 'OPENAI_API_KEY=sk-kept\nMEM0_USER_ID=myns\nMEM0_MCP_PORT=6337\nUM_VAULT_DIR=%s\nUM_AUTH_TOKEN=tok-kept\n' \
+  "$T/vault" > "$T/server/.env"
+TEOF_RC=0
+env -i PATH="$T/bin:/usr/bin:/bin" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$T/plugins" \
+  SHELL=/bin/bash HOME="$T/home" UM_SKIP_KEY_VALIDATION=1 \
+  bash "$T/server/install.sh" --yes </dev/null > "$T/install.out" 2>&1 || TEOF_RC=$?
+assert_exit_zero "TEOF --yes over a .env: exits 0" "$TEOF_RC"
+assert_eq "TEOF --yes over a .env: rewrites the settings it was warned about" \
+  "$(grep -E '^(OPENAI_API_KEY|MEM0_USER_ID|MEM0_MCP_PORT|UM_VAULT_DIR|UM_AUTH_TOKEN)=' "$T/server/.env" | tr '\n' ' ')" \
+  "OPENAI_API_KEY= MEM0_USER_ID=default MEM0_MCP_PORT=6335 UM_VAULT_DIR=$T/home/.um/vault UM_AUTH_TOKEN=tok-kept "
+
+# _teof_signal <dir> <path> <text> [VAR=value ...] [-- <install.sh args>]: the
+# install from <dir>, with stdin a fifo this shell holds open and never writes
+# to, gets TERM once <path> (a file, or a directory searched whole) contains
+# <text>. Sets TEOF_SEEN (1 if <text> showed up in time), TEOF_RC and TEOF_OUT.
+# TERM because a background job ignores SIGINT; a fifo because a helper
+# process holding a pipe would be one more pid to find and kill. The wait is
+# bounded: an install that shrugs TERM off (the bug the first case pins) would
+# otherwise read the fifo forever, so the fifo is closed and then KILL sent.
+_teof_signal() {
+  local t="$1" path="$2" text="$3" pid; shift 3
+  local vars=() args=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = "--" ]; then shift; args=("$@"); break; fi
+    vars+=("$1"); shift
+  done
+  mkfifo "$t/hold"
+  env PATH="$t/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$t/plugins" SHELL=/bin/bash \
+    HOME="$t/home" ${vars[@]+"${vars[@]}"} bash "$t/server/install.sh" ${args[@]+"${args[@]}"} \
+    < "$t/hold" > "$t/install.out" 2>&1 &
+  pid=$!
+  exec 4> "$t/hold"
+  TEOF_SEEN=0
+  for _ in $(seq 1 200); do
+    if grep -rqF "$text" "$path" 2>/dev/null; then TEOF_SEEN=1; break; fi
+    sleep 0.1
+  done
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  exec 4>&-
+  if kill -0 "$pid" 2>/dev/null; then sleep 2; kill -KILL "$pid" 2>/dev/null || true; fi
+  TEOF_RC=0; wait "$pid" || TEOF_RC=$?
+  TEOF_OUT=$(cat "$t/install.out")
+}
+
+# A signal at a prompt stops the install. The INT/TERM trap only cleaned up, so
+# the interrupted read failed like an empty stdin and the run blamed stdin and
+# offered --yes.
+T="$TMPROOT/teof-signal"; _teof_setup "$T" 200
+_teof_signal "$T" "$T/install.out" "OpenAI API key (input hidden)" OPENAI_API_KEY=
+assert_eq "TEOF signal at a prompt: reached the prompt first" "$TEOF_SEEN" "1"
+assert_eq "TEOF signal at a prompt: exits 130" "$TEOF_RC" "130"
+assert_not_contains "TEOF signal at a prompt: does not blame stdin" "$TEOF_OUT" "stdin ended"
+
+# _teof_log_mktemp <dir>: a mktemp in <dir>/bin that writes each path it makes
+# to <dir>/bin/made. On macOS CI the files did not land in a TMPDIR a case set,
+# so the cases follow the paths themselves. _teof_made_left <dir> prints the
+# ones still there.
+_teof_log_mktemp() {
+  cat > "$1/bin/mktemp" <<'FAKE'
+#!/usr/bin/env bash
+p=$(/usr/bin/mktemp "$@") || exit
+echo "$p" >> "$(dirname "$0")/made"
+echo "$p"
+FAKE
+  chmod +x "$1/bin/mktemp"
+}
+_teof_made_left() {
+  local p left=''
+  while IFS= read -r p; do if [ -e "$p" ]; then left+="$p "; fi; done < "$1/bin/made"
+  printf '%s' "$left"
+}
+
+# The EXIT trap is what removes the key file when a signal ends the run. This
+# curl holds the key probe open long enough for the signal to land during it.
+# It removes nothing else: _SMOKE_HOME is --verify's scratch dir, and one in the
+# caller's environment is not this run's.
+T="$TMPROOT/teof-signal-key"; _teof_setup "$T" 200; mkdir -p "$T/not-ours"; _teof_log_mktemp "$T"
+mv "$T/bin/curl" "$T/bin/curl-200"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "$*" == *"openai.com"* ]]; then echo probing >> "$(dirname "$0")/probing"; sleep 3; fi
+exec "$(dirname "$0")/curl-200" "$@"
+FAKE
+chmod +x "$T/bin/curl"
+_teof_signal "$T" "$T/bin/probing" "probing" OPENAI_API_KEY=sk-testkey12345 \
+  MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" _SMOKE_HOME="$T/not-ours"
+assert_eq "TEOF signal during the key probe: the probe was under way first" "$TEOF_SEEN" "1"
+assert_eq "TEOF signal during the key probe: exits 130" "$TEOF_RC" "130"
+assert_file_exists "TEOF signal during the key probe: a key file was made" "$T/bin/made"
+assert_eq "TEOF signal during the key probe: leaves no key file" "$(_teof_made_left "$T")" ""
+assert_file_exists "TEOF signal during the key probe: an inherited _SMOKE_HOME survives" "$T/not-ours"
+
+# --verify stages a smoke HOME in a temp dir, and its smoke turn lands in the
+# vault's captures/install-verify; both go at the end of the run, and at a
+# signal too. This py stands in for the first interpreter --verify probes once
+# the dir exists, and holds the run there.
+T="$TMPROOT/teof-signal-verify"; _teof_setup "$T" 200; _teof_log_mktemp "$T"
+mkdir -p "$T/vault/captures/install-verify"; touch "$T/vault/captures/install-verify/turn.md"
+mkdir -p "$T/plugins/cache/universal-memory/universal-memory"
+cp -r "$PLUGIN_SRC" "$T/plugins/cache/universal-memory/universal-memory/1.8.1"
+cat > "$T/bin/py" <<'FAKE'
+#!/usr/bin/env bash
+d=$(dirname "$0")
+if [ -f "$d/made" ]; then
+  while IFS= read -r p; do if [ -d "$p" ]; then echo staged >> "$d/py-ran"; fi; done < "$d/made"
+fi
+sleep 3
+exit 1
+FAKE
+chmod +x "$T/bin/py"
+_teof_signal "$T" "$T/bin/py-ran" "staged" MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_OPENAI_API_KEY=sk-testkey12345 -- --verify
+assert_eq "TEOF signal during --verify: the smoke dir was staged first" "$TEOF_SEEN" "1"
+assert_eq "TEOF signal during --verify: exits 130" "$TEOF_RC" "130"
+assert_eq "TEOF signal during --verify: leaves no smoke dir" "$(_teof_made_left "$T")" ""
+assert_eq "TEOF signal during --verify: leaves no smoke capture in the vault" \
+  "$(ls -A "$T/vault/captures" 2>/dev/null)" ""
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
