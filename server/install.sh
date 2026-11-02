@@ -109,7 +109,11 @@ _um_cleanup() {
 		_UM_TMP_KEYFILE=""
 	fi
 }
-trap _um_cleanup EXIT INT TERM
+trap _um_cleanup EXIT
+# A signal ends the run (the EXIT trap still cleans up). A trap that only
+# cleaned up let the interrupted command fail and the run carry on from there:
+# Ctrl-C at a prompt was reported as stdin ending, with a --yes way out.
+trap 'exit 130' INT TERM
 
 # ─── Shared helpers for the sole-argument modes (--verify / --upgrade) ───────
 # Both modes probe an already-running install, so both need the same two
@@ -1249,13 +1253,19 @@ fi
 # With a .env in place, --yes alone is not a safe way out: it keeps the token,
 # the capture switches and the container user, and takes the rest from the
 # environment or the defaults, so an install's namespace, port and vault went
-# back to default, 6335 and ~/.um/vault.
+# back to default, 6335 and ~/.um/vault. --upgrade is named only for an install
+# that was there before this run; one this run is creating has no stack yet.
 _um_read() {
 	local _um_hide='' _um_env_note=''
 	if [ "$1" = "-s" ]; then _um_hide=-s; shift; fi
 	printf -v "$1" '%s' ''
 	read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
-		[ -f "$ENV_FILE" ] && _um_env_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first, or to upgrade this install instead, run: bash $SCRIPT_DIR/install.sh --upgrade"
+		if [ -f "$ENV_FILE" ]; then
+			_um_env_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first."
+			if [ "$UM_WAS_EXISTING_INSTALL" = "1" ]; then
+				_um_env_note+=" To upgrade this install instead, run: bash $SCRIPT_DIR/install.sh --upgrade"
+			fi
+		fi
 		echo >&2
 		fail "No answer to that prompt: stdin ended. $2 (From curl, pass flags as: curl ... | bash -s -- --yes)$_um_env_note"
 	}

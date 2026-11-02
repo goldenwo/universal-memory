@@ -2661,8 +2661,10 @@ T="$TMPROOT/teof-profile"; _teof_setup "$T" 200
 _teof_check "shell profile" "Re-run with --yes to add the settings to $T/home/.bashrc." "$T" \
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
   UM_SKIP_KEY_VALIDATION=1
-# The .env this run wrote is one a --yes re-run rewrites too.
+# The .env this run wrote is one a --yes re-run rewrites too, but this run
+# started no stack, so there is nothing for --upgrade to upgrade.
 assert_contains "TEOF shell profile: warns about the .env this run wrote" "$TEOF_OUT" "$TEOF_ENV_WARNING"
+assert_not_contains "TEOF shell profile: a first install is not sent to --upgrade" "$TEOF_OUT" "--upgrade"
 
 T="$TMPROOT/teof-last"; _teof_setup "$T" 200
 printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \
@@ -2701,6 +2703,24 @@ printf 'MEM0_USER_ID=testuser\n' > "$T/server/.env"
 _teof_check --unreadable "unreadable stdin at the existing .env" "Re-run with --yes to back up" "$T" \
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
   UM_SKIP_KEY_VALIDATION=1
+
+# A signal at a prompt stops the install. The INT/TERM trap only cleaned up, so
+# the interrupted read failed like an empty stdin and the run blamed stdin and
+# offered --yes. stdin here is a pipe nothing writes to, so the prompt waits.
+# (TERM: a background job ignores SIGINT.)
+T="$TMPROOT/teof-signal"; _teof_setup "$T" 200
+exec 3< <(sleep 60)
+TEOF_HOLD=$!
+env PATH="$T/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$T/plugins" SHELL=/bin/bash \
+  HOME="$T/home" OPENAI_API_KEY= bash "$T/server/install.sh" <&3 > "$T/install.out" 2>&1 &
+TEOF_PID=$!
+exec 3<&-
+for _ in $(seq 1 200); do grep -q 'OpenAI API key' "$T/install.out" 2>/dev/null && break; sleep 0.1; done
+kill -TERM "$TEOF_PID" 2>/dev/null || true
+TEOF_RC=0; wait "$TEOF_PID" || TEOF_RC=$?
+kill "$TEOF_HOLD" 2>/dev/null || true
+assert_eq "TEOF signal at a prompt: exits 130" "$TEOF_RC" "130"
+assert_not_contains "TEOF signal at a prompt: does not blame stdin" "$(cat "$T/install.out")" "stdin ended"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
