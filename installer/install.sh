@@ -30,9 +30,9 @@
 # last line), so bash reads all of it before it runs any of it. Under
 # curl | bash -s the script is bash's stdin, read as it ran: a step that reads
 # stdin (server/install.sh's compose run did) took the rest, so the later steps
-# never ran and the install still exited 0. A download cut off past the first
-# line now runs nothing: bash cannot parse it. The cost: a shopt or alias set
-# in here does not reach code in the group, which was parsed before it ran.
+# never ran and the install still exited 0. A download cut off before the
+# closing brace now runs nothing. One cost: `shopt -s extglob` set in here
+# comes too late for patterns in the group, which bash parsed first.
 set -euo pipefail
 
 REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
