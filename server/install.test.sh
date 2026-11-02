@@ -937,6 +937,7 @@ fi
 #   FAKE_NO_CONTAINER  1 ⇒ `compose ps -q` returns nothing (stack is down)
 #   FAKE_OLD_ID        image ID reported for the running container
 #   FAKE_OLD_TAG       image tag reported for the running container
+#   FAKE_READ_STDIN    1 ⇒ every call reads its stdin, as compose's prompts do
 make_fake_docker_upgrade() {
   local dest="$1"
   mkdir -p "$dest"
@@ -947,6 +948,7 @@ if [ -n "${FAKE_DOCKER_LOG:-}" ]; then
   printf 'ARGS=%s UM_IMAGE=%s UM_VERSION=%s\n' \
     "$args" "${UM_IMAGE:-}" "${UM_VERSION:-}" >> "$FAKE_DOCKER_LOG"
 fi
+if [ "${FAKE_READ_STDIN:-0}" = "1" ]; then cat > /dev/null; fi
 case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
@@ -2559,6 +2561,92 @@ run_upgrade "$TCE8/bin" "$TCE8_SH" "$TCE8/docker.log" \
   FAKE_RUN_STDIN="$TCE8/run-stdin" -- --upgrade <<< 'echo LEFT-FOR-THE-CALLER' > "$TCE8/upgrade.out" || TCE8_EXIT=$?
 assert_exit_zero "TCE8: --upgrade exits 0" "$TCE8_EXIT"
 assert_eq "TCE8: no compose run read the caller's stdin" "$(wc -c < "$TCE8/run-stdin" 2>/dev/null | tr -d ' ')" "0"
+
+# compose up -d asks before it recreates a named volume whose configuration
+# changed (a host override can declare one), and with no terminal it reads the
+# answer from stdin: compose v5.0.0 took `echo N` from a deploy script piped to
+# `bash -s`, which then ran `EXT-LINE-RAN`. Compose's prompts are not a fixed
+# list, so --upgrade hands no command the caller's stdin, and here every docker
+# call reads whatever it is handed.
+echo ""
+echo "=== TCE9: --upgrade leaves the caller's stdin unread ==="
+TCE9="$TMPROOT/tce9"
+mkdir -p "$TCE9/server"
+make_fakebin "$TCE9/bin" 200
+make_fake_docker_upgrade "$TCE9/bin"
+TCE9_SH=$(make_isolated_server "$TCE9/server")
+TCE9_EXIT=0
+{
+  run_upgrade "$TCE9/bin" "$TCE9_SH" "$TCE9/docker.log" FAKE_READ_STDIN=1 -- --upgrade \
+    > "$TCE9/upgrade.out" || TCE9_EXIT=$?
+  cat > "$TCE9/left"
+} <<< 'echo LEFT-FOR-THE-CALLER'
+assert_exit_zero "TCE9: --upgrade exits 0" "$TCE9_EXIT"
+assert_eq "TCE9: the caller's stdin is left for the caller" "$(cat "$TCE9/left")" "echo LEFT-FOR-THE-CALLER"
+
+# ─── TEOF: a prompt with nothing on stdin says what to do instead ────────────
+# `curl ... | bash` with no flags installs everything without --yes, so
+# server/install.sh asks its questions with stdin already at its end. A bare
+# `read` then failed under set -e: exit 1, the question on screen, no reason.
+# Each prompt now fails with a way out; an answer on a last line with no newline
+# still counts.
+echo ""
+echo "=== TEOF: a prompt with no answer on stdin fails with a way out ==="
+# _teof_setup <dir> <openai_status>: a fresh install tree.
+_teof_setup() {
+  mkdir -p "$1/vault" "$1/plugins" "$1/home"; touch "$1/home/.bashrc"
+  make_fakebin "$1/bin" "$2"; make_isolated_server "$1/server" >/dev/null
+}
+# _teof_run <dir> [VAR=value ...]: an interactive install from <dir>, on the caller's stdin.
+_teof_run() {
+  local t="$1"; shift
+  run_install "$t/bin" "$t/server/install.sh" \
+    CLAUDE_PLUGINS_DIR="$t/plugins" SHELL=/bin/bash HOME="$t/home" "$@"
+}
+# _teof_check <case> <way out> <dir> [VAR=value ...]: the install, with stdin at
+# its end, fails with the shared reason and <way out>.
+_teof_check() {
+  local name="$1" want="$2" t="$3"; shift 3
+  local rc=0 out
+  out=$(_teof_run "$t" "$@" </dev/null) || rc=$?
+  assert_exit_nonzero "TEOF $name: exits non-zero" "$rc"
+  assert_contains "TEOF $name: says stdin ended" "$out" "No answer to that prompt: stdin ended"
+  assert_contains "TEOF $name: names the way out" "$out" "$want"
+}
+
+T="$TMPROOT/teof-key"; _teof_setup "$T" 200
+_teof_check "hidden key prompt" "Re-run with --yes, or export OPENAI_API_KEY." "$T" OPENAI_API_KEY=
+
+T="$TMPROOT/teof-ns"; _teof_setup "$T" 200
+_teof_check "plain prompt" "Re-run with --yes, or export MEM0_USER_ID." "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=
+
+T="$TMPROOT/teof-cu"; _teof_setup "$T" 200
+printf 'UM_CONTAINER_USER=1001:1001\n' > "$T/server/.env"
+_teof_check "container user change" "or export UM_CONTAINER_USER=1001:1001 to keep it." "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_CONTAINER_USER=1002:1002 UM_SKIP_KEY_VALIDATION=1
+
+T="$TMPROOT/teof-401"; _teof_setup "$T" 401
+_teof_check "rejected key" "Export a valid UM_OPENAI_API_KEY and re-run." "$T" \
+  OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
+
+T="$TMPROOT/teof-env"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=testuser\n' > "$T/server/.env"
+_teof_check "existing .env" "Re-run with --yes to back up" "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_SKIP_KEY_VALIDATION=1
+
+T="$TMPROOT/teof-profile"; _teof_setup "$T" 200
+_teof_check "shell profile" "Re-run with --yes to add the settings to $T/home/.bashrc." "$T" \
+  OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
+  UM_SKIP_KEY_VALIDATION=1
+
+T="$TMPROOT/teof-last"; _teof_setup "$T" 200
+printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1 >/dev/null 2>&1 || true
+assert_eq "TEOF: a last answer with no newline counts" \
+  "$(grep -E '^MEM0_USER_ID=' "$T/server/.env" 2>/dev/null)" "MEM0_USER_ID=myns"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
