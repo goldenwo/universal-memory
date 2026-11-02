@@ -1248,34 +1248,42 @@ if [ -n "${HOME:-}" ]; then
 fi
 
 # ─── Collect required values ─────────────────────────────────────────────────
-# _um_read [-s] <var> <way out>: every prompt reads its answer into <var> here
-# (-s hides it). A piped install (`curl ... | bash` with no --yes) has no
-# terminal, so its stdin is already at its end, and a bare read then ended the
-# run under set -e with only the question on screen; with no answer this fails
-# with <way out> instead. An answer on a last line with no newline still counts.
+# _um_read [-s] [-w] <var> <way out>: every prompt reads its answer into <var>
+# here (-s hides it; -w keeps the whole line, as a value needs, where a choice
+# is trimmed like a bare read). A piped install (`curl ... | bash` with no
+# --yes) has no terminal, so its stdin is already at its end, and a bare read
+# then ended the run under set -e with only the question on screen; with no
+# answer this fails with <way out> instead. An answer on a last line with no
+# newline still counts. <way out> is read on every call, so a call without one
+# fails the first time it runs, not only at EOF.
 # <var> is emptied first: a read that cannot read at all (stdin open write-only,
 # as nohup leaves it) assigns nothing, and the 401 re-entry then took the
 # rejected key it still held for an answer and validated it again forever.
-# IFS is the caller's: prompt() and the key re-entry run `IFS= _um_read` to keep
-# the answer whole.
 # With a .env in place, --yes alone is not a safe way out: it keeps the token,
 # the capture switches and the container user, and takes the rest from the
 # environment or the defaults, so an install's namespace, port and vault went
 # back to default, 6335 and ~/.um/vault. --upgrade is named only for an install
 # that was there before this run; one this run is creating has no stack yet.
 _um_read() {
-	local _um_hide='' _um_env_note=''
-	if [ "$1" = "-s" ]; then _um_hide=-s; shift; fi
+	local _um_hide='' _um_env_note='' IFS="$IFS"
+	while :; do
+		case "$1" in
+			-s) _um_hide=-s; shift ;;
+			-w) IFS=''; shift ;;
+			*) break ;;
+		esac
+	done
+	local _um_way_out="$2"
 	printf -v "$1" '%s' ''
 	read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
 		if [ -f "$ENV_FILE" ]; then
 			_um_env_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first."
 			if [ "$UM_WAS_EXISTING_INSTALL" = "1" ]; then
-				_um_env_note+=" To upgrade this install instead, run: bash $SCRIPT_DIR/install.sh --upgrade"
+				_um_env_note+=" To upgrade this install instead, run: bash $(printf '%q' "$SCRIPT_DIR/install.sh") --upgrade"
 			fi
 		fi
 		echo >&2
-		fail "No answer to that prompt: stdin ended. $2 (From curl, pass flags as: curl ... | bash -s -- --yes)$_um_env_note"
+		fail "No answer to that prompt: stdin ended. $_um_way_out (From curl, pass flags as: curl ... | bash -s -- --yes)$_um_env_note"
 	}
 }
 
@@ -1297,11 +1305,11 @@ prompt() {
 	while [ -z "$val" ]; do
 		if [ "$secret" = "1" ]; then
 			printf '%s%s: ' "$desc" "${default:+ [default: $default]}" >&2
-			IFS= _um_read -s val "$way_out"
+			_um_read -w -s val "$way_out"
 			echo >&2
 		else
 			printf '%s%s: ' "$desc" "${default:+ [default: $default]}" >&2
-			IFS= _um_read val "$way_out"
+			_um_read -w val "$way_out"
 		fi
 		[ -z "$val" ] && [ -n "$default" ] && val="$default"
 		if [ -z "$val" ]; then
@@ -1496,7 +1504,7 @@ else
 			fi
 			warn "OpenAI API rejected this key (401). Please re-enter."
 			printf 'UM_OPENAI_API_KEY (input hidden): ' >&2
-			IFS= _um_read -s _key_to_validate "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
+			_um_read -w -s _key_to_validate "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
 			echo >&2
 			[ -z "$_key_to_validate" ] && fail "Empty key — aborting."
 		done

@@ -2637,6 +2637,14 @@ assert_contains "TEOF existing install: says what --yes rewrites" "$TEOF_OUT" \
   "$TEOF_ENV_WARNING $T/server/.env from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them)"
 assert_contains "TEOF existing install: names the upgrade" "$TEOF_OUT" "/install.sh --upgrade"
 
+# The printed command runs as pasted from a checkout whose path has a space
+# (a Windows user name, say).
+T="$TMPROOT/teof existing spaced"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=myns\n' > "$T/server/.env"
+_teof_check "existing install, spaced path" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_contains "TEOF existing install, spaced path: the upgrade command quotes the path" "$TEOF_OUT" \
+  "run: bash $(printf '%q' "$T/server/install.sh") --upgrade"
+
 T="$TMPROOT/teof-ns"; _teof_setup "$T" 200
 _teof_check "plain prompt" "Re-run with --yes to take the defaults (export MEM0_USER_ID first to choose your own)." "$T" \
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=
