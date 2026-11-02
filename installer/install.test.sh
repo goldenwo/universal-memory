@@ -21,6 +21,8 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 # developer's own shell.
 unset UM_INSTALL_DIR UM_MCP_WRITE_ENABLED UM_MOUNT_MODE UM_SUMMARIZER UM_AUTH_TOKEN UM_DRY_RUN \
   UM_EMBEDDING_PROVIDER UM_SUMMARIZER_PROVIDER UM_FACTS_PROVIDER UM_SERVER_URL UM_REPO_URL
+# Nor may a startup file: a non-interactive bash runs $BASH_ENV first.
+unset BASH_ENV
 
 # Helper: create stubs for prereq tools (excluding bash — real bash is needed
 # to execute the installer under test). openssl is stubbed too, so a host
@@ -573,10 +575,11 @@ if [ -f "$TPS/server-stdin" ] && [ ! -s "$TPS/server-stdin" ]; then pass "T-PIPE
 rm -rf "$TPS"
 
 # ─── T-TRUNCATED: a cut-off download runs nothing and fails ─────────────────
-# curl | bash runs whatever arrived. Cut inside the usage header, the script was
-# all comments: nothing ran and the install exited 0. Cut before the closing
-# line, everything but the group's `}` arrived; without the group that would
-# run every step.
+# curl | bash runs whatever arrived. Cut after line 2 (the `{` line), a group
+# opened any lower left only comments: nothing ran and the install exited 0.
+# Cut before the closing line, everything but the group's `}` arrived; without
+# the group that would run every step. Both cuts end a line, so bash's only
+# complaint is the unexpected end of file.
 echo ""
 echo "=== T-TRUNCATED: a cut-off download runs nothing and exits non-zero ==="
 TTR=$(mktemp -d)
@@ -584,8 +587,9 @@ make_stubs "$TTR/bin"
 mkdir -p "$TTR/repo/server" "$TTR/repo/installer" "$TTR/repo/.git"
 printf '#!/usr/bin/env bash\ntouch "%s/server-ran"\n' "$TTR" > "$TTR/repo/server/install.sh"
 TTR_SIZE=$(wc -c < "$INSTALLER" | tr -d ' ')
+TTR_HEAD=$(head -n 2 "$INSTALLER" | wc -c | tr -d ' ')
 TTR_LAST=$(tail -n 1 "$INSTALLER" | wc -c | tr -d ' ')
-for TTR_CUT in 1000 $((TTR_SIZE - TTR_LAST)); do
+for TTR_CUT in "$TTR_HEAD" $((TTR_SIZE - TTR_LAST)); do
   rm -f "$TTR/server-ran"
   TTR_EXIT=0
   head -c "$TTR_CUT" "$INSTALLER" | env PATH="$TTR/bin:/usr/bin:/bin" HOME="$TTR" LC_ALL=C OPENAI_API_KEY=sk-test \
