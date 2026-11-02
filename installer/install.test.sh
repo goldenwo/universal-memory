@@ -6,6 +6,10 @@
 # stub `bash` itself because the outer invocation `bash $INSTALLER` needs real
 # bash to execute the script (stubbing bash would make the test runner a stub).
 set -euo pipefail
+# A pre-push hook run from a worktree exports GIT_DIR, so `git rev-parse
+# --show-toplevel` answered with this directory and REPO_ROOT ended in
+# installer/ (mirrors server/install.test.sh and install-cli.test.sh).
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALLER="$SCRIPT_DIR/install.sh"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")"
