@@ -2601,27 +2601,41 @@ _teof_run() {
     CLAUDE_PLUGINS_DIR="$t/plugins" SHELL=/bin/bash HOME="$t/home" "$@"
 }
 # _teof_check <case> <way out> <dir> [VAR=value ...]: the install, with stdin at
-# its end, fails with the shared reason and <way out>.
+# its end, fails with the shared reason and <way out>. TEOF_OUT keeps its output.
 # --unreadable: stdin is open write-only instead (read fails with EBADF).
 _teof_check() {
   local unreadable=0; if [ "$1" = "--unreadable" ]; then unreadable=1; shift; fi
   local name="$1" want="$2" t="$3"; shift 3
-  local rc=0 out
+  local rc=0
   if [ "$unreadable" = "1" ]; then
-    out=$(_teof_run "$t" "$@" 0>/dev/null) || rc=$?
+    TEOF_OUT=$(_teof_run "$t" "$@" 0>/dev/null) || rc=$?
   else
-    out=$(_teof_run "$t" "$@" </dev/null) || rc=$?
+    TEOF_OUT=$(_teof_run "$t" "$@" </dev/null) || rc=$?
   fi
   assert_exit_nonzero "TEOF $name: exits non-zero" "$rc"
-  assert_contains "TEOF $name: says stdin ended" "$out" "No answer to that prompt: stdin ended"
-  assert_contains "TEOF $name: names the way out" "$out" "$want"
-  assert_contains "TEOF $name: says where a piped install takes --yes" "$out" "| bash -s -- --yes"
+  assert_contains "TEOF $name: says stdin ended" "$TEOF_OUT" "No answer to that prompt: stdin ended"
+  assert_contains "TEOF $name: names the way out" "$TEOF_OUT" "$want"
+  assert_contains "TEOF $name: says where a piped install takes --yes" "$TEOF_OUT" "| bash -s -- --yes"
 }
+# A --yes re-run takes most settings from the environment or the defaults, so
+# with a .env in place every way out says what --yes would rewrite in it.
+TEOF_ENV_WARNING="--yes rewrites most of the settings in"
 
 # Every way out ends in --yes: a re-run that answers only this prompt stops at
 # the next one.
 T="$TMPROOT/teof-key"; _teof_setup "$T" 200
 _teof_check "hidden key prompt" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_not_contains "TEOF hidden key prompt: a first install has no .env to warn about" \
+  "$TEOF_OUT" "$TEOF_ENV_WARNING"
+
+# An existing install's namespace, port and vault went back to default, 6335
+# and ~/.um/vault when its operator took the way out as given.
+T="$TMPROOT/teof-existing"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=myns\nMEM0_MCP_PORT=6337\nUM_VAULT_DIR=%s\n' "$T/vault" > "$T/server/.env"
+_teof_check "existing install" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_contains "TEOF existing install: says what --yes rewrites" "$TEOF_OUT" \
+  "$TEOF_ENV_WARNING $T/server/.env from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them)"
+assert_contains "TEOF existing install: names the upgrade" "$TEOF_OUT" "/install.sh --upgrade"
 
 T="$TMPROOT/teof-ns"; _teof_setup "$T" 200
 _teof_check "plain prompt" "Re-run with --yes to take the defaults (export MEM0_USER_ID first to choose your own)." "$T" \
@@ -2647,6 +2661,8 @@ T="$TMPROOT/teof-profile"; _teof_setup "$T" 200
 _teof_check "shell profile" "Re-run with --yes to add the settings to $T/home/.bashrc." "$T" \
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
   UM_SKIP_KEY_VALIDATION=1
+# The .env this run wrote is one a --yes re-run rewrites too.
+assert_contains "TEOF shell profile: warns about the .env this run wrote" "$TEOF_OUT" "$TEOF_ENV_WARNING"
 
 T="$TMPROOT/teof-last"; _teof_setup "$T" 200
 printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \

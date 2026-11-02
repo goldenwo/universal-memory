@@ -1246,13 +1246,18 @@ fi
 # rejected key it still held for an answer and validated it again forever.
 # IFS is the caller's: prompt() and the key re-entry run `IFS= _um_read` to keep
 # the answer whole.
+# With a .env in place, --yes alone is not a safe way out: it keeps the token,
+# the capture switches and the container user, and takes the rest from the
+# environment or the defaults, so an install's namespace, port and vault went
+# back to default, 6335 and ~/.um/vault.
 _um_read() {
-	local _um_hide=
+	local _um_hide='' _um_env_note=''
 	if [ "$1" = "-s" ]; then _um_hide=-s; shift; fi
 	printf -v "$1" '%s' ''
 	read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
+		[ -f "$ENV_FILE" ] && _um_env_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first, or to upgrade this install instead, run: bash $SCRIPT_DIR/install.sh --upgrade"
 		echo >&2
-		fail "No answer to that prompt: stdin ended. $2 (From curl, pass flags as: curl ... | bash -s -- --yes)"
+		fail "No answer to that prompt: stdin ended. $2 (From curl, pass flags as: curl ... | bash -s -- --yes)$_um_env_note"
 	}
 }
 
