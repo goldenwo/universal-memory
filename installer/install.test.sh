@@ -21,6 +21,8 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 # developer's own shell.
 unset UM_INSTALL_DIR UM_MCP_WRITE_ENABLED UM_MOUNT_MODE UM_SUMMARIZER UM_AUTH_TOKEN UM_DRY_RUN \
   UM_EMBEDDING_PROVIDER UM_SUMMARIZER_PROVIDER UM_FACTS_PROVIDER UM_SERVER_URL UM_REPO_URL
+# Nor may a startup file: a non-interactive bash runs $BASH_ENV first.
+unset BASH_ENV
 
 # Helper: create stubs for prereq tools (excluding bash — real bash is needed
 # to execute the installer under test). openssl is stubbed too, so a host
@@ -551,6 +553,52 @@ TSU_OUT=$(env PATH="$TSU/bin:/usr/bin:/bin" HOME="$TSU" OPENAI_API_KEY=sk-test U
   bash "$INSTALLER" --server --cli --yes 2>&1) || true
 if [ "$(echo "$TSU_OUT" | grep -c "SUMMARIZER openai")" = 2 ]; then pass "T-SUMMARIZER: an explicit export wins"; else fail "T-SUMMARIZER: got $(echo "$TSU_OUT" | grep SUMMARIZER | tr '\n' ' ')"; fi
 rm -rf "$TSU"
+
+# ─── T-PIPED-STDIN: a step that reads stdin cannot take the piped installer ──
+# Under curl | bash -s, the installer's own text is bash's stdin, read as the
+# script runs. A step that reads stdin (server/install.sh's config check did,
+# #403) took the rest of the installer: the later steps never ran, and the
+# install still exited 0.
+echo ""
+echo "=== T-PIPED-STDIN: a piped install runs every step when one reads stdin ==="
+TPS=$(mktemp -d)
+make_stubs "$TPS/bin"
+mkdir -p "$TPS/repo/server" "$TPS/repo/installer" "$TPS/repo/.git"
+printf '#!/usr/bin/env bash\ncat > "%s/server-stdin"\necho SERVER-RAN\n' "$TPS" > "$TPS/repo/server/install.sh"
+printf '#!/usr/bin/env bash\necho CLI-RAN\n' > "$TPS/repo/installer/install-cli.sh"
+# shellcheck disable=SC2002  # a pipe, not a file on stdin: curl | bash is the case
+TPS_OUT=$(cd "$TPS" && cat "$INSTALLER" | env PATH="$TPS/bin:/usr/bin:/bin" HOME="$TPS" OPENAI_API_KEY=sk-test \
+  UM_INSTALL_DIR="$TPS/repo" bash -s -- --server --cli --yes 2>&1) && TPS_EXIT=0 || TPS_EXIT=$?
+if [ "$TPS_EXIT" -eq 0 ]; then pass "T-PIPED-STDIN: the piped install exits 0"; else fail "T-PIPED-STDIN: the piped install exited $TPS_EXIT"; fi
+if echo "$TPS_OUT" | grep -qx "SERVER-RAN" && echo "$TPS_OUT" | grep -qx "CLI-RAN"; then pass "T-PIPED-STDIN: the CLI step runs after a server step that reads stdin"; else fail "T-PIPED-STDIN: a step was skipped (got: $(echo "$TPS_OUT" | tail -4 | tr '\n' ' '))"; fi
+if [ -f "$TPS/server-stdin" ] && [ ! -s "$TPS/server-stdin" ]; then pass "T-PIPED-STDIN: the server step read none of the installer"; else fail "T-PIPED-STDIN: the server step read $(wc -c < "$TPS/server-stdin" 2>/dev/null || echo '?') bytes of the installer"; fi
+rm -rf "$TPS"
+
+# ─── T-TRUNCATED: a cut-off download runs nothing and fails ─────────────────
+# curl | bash runs whatever arrived. Cut after line 2 (the `{` line), a group
+# opened any lower left only comments: nothing ran and the install exited 0.
+# Cut before the closing line, everything but the group's `}` arrived; without
+# the group that would run every step. Both cuts end a line, so bash's only
+# complaint is the unexpected end of file.
+echo ""
+echo "=== T-TRUNCATED: a cut-off download runs nothing and exits non-zero ==="
+TTR=$(mktemp -d)
+make_stubs "$TTR/bin"
+mkdir -p "$TTR/repo/server" "$TTR/repo/installer" "$TTR/repo/.git"
+printf '#!/usr/bin/env bash\ntouch "%s/server-ran"\n' "$TTR" > "$TTR/repo/server/install.sh"
+TTR_SIZE=$(wc -c < "$INSTALLER" | tr -d ' ')
+TTR_HEAD=$(head -n 2 "$INSTALLER" | wc -c | tr -d ' ')
+TTR_LAST=$(tail -n 1 "$INSTALLER" | wc -c | tr -d ' ')
+for TTR_CUT in "$TTR_HEAD" $((TTR_SIZE - TTR_LAST)); do
+  rm -f "$TTR/server-ran"
+  TTR_EXIT=0
+  head -c "$TTR_CUT" "$INSTALLER" | env PATH="$TTR/bin:/usr/bin:/bin" HOME="$TTR" LC_ALL=C OPENAI_API_KEY=sk-test \
+    UM_INSTALL_DIR="$TTR/repo" bash -s -- --server --yes > "$TTR/out" 2>&1 || TTR_EXIT=$?
+  # Nothing ran: bash refused to parse (not a launch error, 126/127) and printed
+  # nothing else, and the server step never started.
+  if [ "$TTR_EXIT" -ne 0 ] && grep -q "syntax error" "$TTR/out" && ! grep -qv "syntax error" "$TTR/out" && [ ! -e "$TTR/server-ran" ]; then pass "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE runs nothing and fails to parse (exit $TTR_EXIT)"; else fail "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE exited $TTR_EXIT (server step ran: $([ -e "$TTR/server-ran" ] && echo yes || echo no); output: $(head -3 "$TTR/out" | tr '\n' ' '))"; fi
+done
+rm -rf "$TTR"
 
 # ─── T-SELF-CLONE: run from a clone, the installer uses that clone ───────────
 # INSTALL_DIR defaulted to ~/universal-memory, so `git clone ... /some/dir;

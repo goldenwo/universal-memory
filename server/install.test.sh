@@ -958,6 +958,8 @@ if [[ "$args" == compose*" run "*"memory-server"* ]]; then
   if [ -n "${FAKE_RUN_SAW_DIR:-}" ]; then
     if [ -d "${FAKE_HISTORY_DIR:-}" ]; then echo yes; else echo no; fi > "$FAKE_RUN_SAW_DIR"
   fi
+  # FAKE_RUN_STDIN: append what each compose run was handed on stdin; compose run reads it.
+  if [ -n "${FAKE_RUN_STDIN:-}" ]; then cat >> "$FAKE_RUN_STDIN"; fi
   if [ "${FAKE_ENVCHECK_RC:-0}" = "1" ]; then
     echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2
   fi
@@ -2541,6 +2543,22 @@ TCE7_OUT=$(run_upgrade "$TCE7/bin" "$TCE7_SH" "$TCE7/docker.log" \
   FAKE_RUN_SAW_DIR="$TCE7/run-saw-dir" FAKE_HISTORY_DIR="$TCE7/server/data/mem0-history" -- --upgrade) || TCE7_EXIT=$?
 assert_exit_zero "TCE7: --upgrade exits 0" "$TCE7_EXIT"
 assert_eq "TCE7: the history dir existed when the check ran" "$(cat "$TCE7/run-saw-dir" 2>/dev/null)" "yes"
+
+# A deploy script piped to a shell (ssh host 'bash -s' < deploy.sh) hands
+# install.sh that script as stdin. compose run reads stdin, so the check took
+# the rest of the deploy script (#403).
+echo ""
+echo "=== TCE8: no compose run reads the caller's stdin ==="
+TCE8="$TMPROOT/tce8"
+mkdir -p "$TCE8/server"
+make_fakebin "$TCE8/bin" 200
+make_fake_docker_upgrade "$TCE8/bin"
+TCE8_SH=$(make_isolated_server "$TCE8/server")
+TCE8_EXIT=0
+run_upgrade "$TCE8/bin" "$TCE8_SH" "$TCE8/docker.log" \
+  FAKE_RUN_STDIN="$TCE8/run-stdin" -- --upgrade <<< 'echo LEFT-FOR-THE-CALLER' > "$TCE8/upgrade.out" || TCE8_EXIT=$?
+assert_exit_zero "TCE8: --upgrade exits 0" "$TCE8_EXIT"
+assert_eq "TCE8: no compose run read the caller's stdin" "$(wc -c < "$TCE8/run-stdin" 2>/dev/null | tr -d ' ')" "0"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
