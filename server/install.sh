@@ -1236,14 +1236,20 @@ if [ -n "${HOME:-}" ]; then
 fi
 
 # ─── Collect required values ─────────────────────────────────────────────────
-# Every prompt's read ends `|| [ -n "$answer" ] || _um_no_answer "<way out>"`.
-# A piped install (`curl ... | bash` with no --yes) has no terminal, so its
-# stdin is already at its end, and a bare read then ended the run under set -e
-# with only the question on screen. The -n test keeps an answer that was given
-# on a last line with no newline.
-_um_no_answer() {
-	echo >&2
-	fail "No answer to that prompt: stdin ended (a piped install has no terminal). $1"
+# _um_read [-s] <var> <way out>: every prompt reads its answer into <var> here
+# (-s hides it). A piped install (`curl ... | bash` with no --yes) has no
+# terminal, so its stdin is already at its end, and a bare read then ended the
+# run under set -e with only the question on screen; with no answer this fails
+# with <way out> instead. An answer on a last line with no newline still counts.
+# IFS is the caller's: prompt() and the key re-entry run `IFS= _um_read` to keep
+# the answer whole.
+_um_read() {
+	local _um_hide=
+	if [ "$1" = "-s" ]; then _um_hide=-s; shift; fi
+	read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
+		echo >&2
+		fail "No answer to that prompt: stdin ended. $2 (From curl, pass flags as: curl ... | bash -s -- --yes)"
+	}
 }
 
 prompt() {
@@ -1256,15 +1262,19 @@ prompt() {
 		return
 	fi
 
+	# --yes answers every prompt after this one too; only a value with no
+	# default has to come from the environment.
+	local way_out="Re-run with --yes to take the defaults (export $var first to choose your own)."
+	[ -n "$default" ] || way_out="Export $var and re-run with --yes."
 	local val=""
 	while [ -z "$val" ]; do
 		if [ "$secret" = "1" ]; then
 			printf '%s%s: ' "$desc" "${default:+ [default: $default]}" >&2
-			IFS= read -rs val || [ -n "$val" ] || _um_no_answer "Re-run with --yes, or export $var."
+			IFS= _um_read -s val "$way_out"
 			echo >&2
 		else
 			printf '%s%s: ' "$desc" "${default:+ [default: $default]}" >&2
-			IFS= read -r val || [ -n "$val" ] || _um_no_answer "Re-run with --yes, or export $var."
+			IFS= _um_read val "$way_out"
 		fi
 		[ -z "$val" ] && [ -n "$default" ] && val="$default"
 		if [ -z "$val" ]; then
@@ -1411,7 +1421,7 @@ if [ -n "${UM_CONTAINER_USER:-}" ] && [ -n "$_PRIOR_CONTAINER_USER" ] \
 	fi
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
 		printf 'Continue with new UM_CONTAINER_USER? [y/N] ' >&2
-		read -r _ans || [ -n "$_ans" ] || _um_no_answer "Re-run with --yes to switch to $UM_CONTAINER_USER, or export UM_CONTAINER_USER=$_PRIOR_CONTAINER_USER to keep it."
+		_um_read _ans "Re-run with --yes to switch to $UM_CONTAINER_USER; to keep $_PRIOR_CONTAINER_USER, export UM_CONTAINER_USER=$_PRIOR_CONTAINER_USER and re-run with --yes."
 		case "$_ans" in [yY]*) ;; *) fail "Aborted by user." ;; esac
 	fi
 fi
@@ -1459,8 +1469,7 @@ else
 			fi
 			warn "OpenAI API rejected this key (401). Please re-enter."
 			printf 'UM_OPENAI_API_KEY (input hidden): ' >&2
-			IFS= read -rs _key_to_validate || [ -n "$_key_to_validate" ] \
-				|| _um_no_answer "Export a valid UM_OPENAI_API_KEY and re-run."
+			IFS= _um_read -s _key_to_validate "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
 			echo >&2
 			[ -z "$_key_to_validate" ] && fail "Empty key — aborting."
 		done
@@ -1483,7 +1492,7 @@ if [ -f "$ENV_FILE" ]; then
 		ok "Existing .env backed up to $(basename "$BACKUP")."
 	else
 		printf '%s exists. [O]verwrite, [B]ackup-then-overwrite, or [A]bort? [B] ' "$ENV_FILE" >&2
-		read -r CHOICE || [ -n "$CHOICE" ] || _um_no_answer "Re-run with --yes to back up $ENV_FILE and overwrite it."
+		_um_read CHOICE "Re-run with --yes to back up $ENV_FILE and overwrite it."
 		CHOICE="${CHOICE:-B}"
 		case "$CHOICE" in
 			[Oo]*) ;;
@@ -1839,7 +1848,7 @@ _append_to_profile() {
 	# left exactly as it is, and the block (which sets no key) cannot clash with it.
 	if [ "${UM_NONINTERACTIVE:-0}" != "1" ]; then
 		printf 'Add universal-memory settings (UM_SUMMARIZER, UM_SERVER_URL, um on PATH) to %s? [Y/n] ' "$profile" >&2
-		read -r _ans || [ -n "$_ans" ] || _um_no_answer "Re-run with --yes to add the settings to $profile."
+		_um_read _ans "Re-run with --yes to add the settings to $profile."
 		_ans="${_ans:-Y}"
 		[[ "$_ans" =~ ^[Nn] ]] && { info "Shell profile update skipped — add export UM_SUMMARIZER='$summarizer' manually if you want it."; return; }
 	fi

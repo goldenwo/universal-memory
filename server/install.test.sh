@@ -960,8 +960,6 @@ if [[ "$args" == compose*" run "*"memory-server"* ]]; then
   if [ -n "${FAKE_RUN_SAW_DIR:-}" ]; then
     if [ -d "${FAKE_HISTORY_DIR:-}" ]; then echo yes; else echo no; fi > "$FAKE_RUN_SAW_DIR"
   fi
-  # FAKE_RUN_STDIN: append what each compose run was handed on stdin; compose run reads it.
-  if [ -n "${FAKE_RUN_STDIN:-}" ]; then cat >> "$FAKE_RUN_STDIN"; fi
   if [ "${FAKE_ENVCHECK_RC:-0}" = "1" ]; then
     echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2
   fi
@@ -2386,6 +2384,7 @@ done
 #                       line), 3 the image has no bin/check-env.mjs, other: docker
 #                       itself failed
 #   FAKE_RESTART_COUNT  RestartCount of the memory-server container
+#   FAKE_RUN_STDIN      file the check appends its stdin to (compose run reads it)
 make_fake_docker_envcheck() {
   local dest="$1"
   mkdir -p "$dest"
@@ -2398,6 +2397,7 @@ case "$args" in
   info|*" info"*)      echo "{}"; exit 0 ;;
 esac
 if [[ "$args" == compose*" run "*"memory-server"* ]]; then
+  if [ -n "${FAKE_RUN_STDIN:-}" ]; then cat >> "$FAKE_RUN_STDIN"; fi
   case "${FAKE_ENVCHECK_RC:-0}" in
     0) echo "[check-env] ok: the server accepts this environment" ;;
     1) echo '[check-env] FATAL: UM_RATE_LIMIT_BURST must be a whole number >= 1 (default 10), got "10.5"' >&2 ;;
@@ -2548,19 +2548,16 @@ assert_eq "TCE7: the history dir existed when the check ran" "$(cat "$TCE7/run-s
 
 # A deploy script piped to a shell (ssh host 'bash -s' < deploy.sh) hands
 # install.sh that script as stdin. compose run reads stdin, so the check took
-# the rest of the deploy script (#403).
+# the rest of the deploy script (#403). --upgrade closes its stdin outright
+# (TCE9); an install keeps stdin for its prompts, so there the check's own
+# redirect is what holds.
 echo ""
-echo "=== TCE8: no compose run reads the caller's stdin ==="
-TCE8="$TMPROOT/tce8"
-mkdir -p "$TCE8/server"
-make_fakebin "$TCE8/bin" 200
-make_fake_docker_upgrade "$TCE8/bin"
-TCE8_SH=$(make_isolated_server "$TCE8/server")
+echo "=== TCE8: an install's config check reads none of the caller's stdin ==="
+T="$TMPROOT/tce8"; _ce_setup "$T"
 TCE8_EXIT=0
-run_upgrade "$TCE8/bin" "$TCE8_SH" "$TCE8/docker.log" \
-  FAKE_RUN_STDIN="$TCE8/run-stdin" -- --upgrade <<< 'echo LEFT-FOR-THE-CALLER' > "$TCE8/upgrade.out" || TCE8_EXIT=$?
-assert_exit_zero "TCE8: --upgrade exits 0" "$TCE8_EXIT"
-assert_eq "TCE8: no compose run read the caller's stdin" "$(wc -c < "$TCE8/run-stdin" 2>/dev/null | tr -d ' ')" "0"
+_ce_install "$T" FAKE_RUN_STDIN="$T/run-stdin" <<< 'echo LEFT-FOR-THE-CALLER' > "$T/install.out" || TCE8_EXIT=$?
+assert_exit_zero "TCE8: install exits 0" "$TCE8_EXIT"
+assert_eq "TCE8: the check read none of the caller's stdin" "$(wc -c < "$T/run-stdin" 2>/dev/null | tr -d ' ')" "0"
 
 # compose up -d asks before it recreates a named volume whose configuration
 # changed (a host override can declare one), and with no terminal it reads the
@@ -2612,23 +2609,26 @@ _teof_check() {
   assert_exit_nonzero "TEOF $name: exits non-zero" "$rc"
   assert_contains "TEOF $name: says stdin ended" "$out" "No answer to that prompt: stdin ended"
   assert_contains "TEOF $name: names the way out" "$out" "$want"
+  assert_contains "TEOF $name: says where a piped install takes --yes" "$out" "| bash -s -- --yes"
 }
 
+# Every way out ends in --yes: a re-run that answers only this prompt stops at
+# the next one.
 T="$TMPROOT/teof-key"; _teof_setup "$T" 200
-_teof_check "hidden key prompt" "Re-run with --yes, or export OPENAI_API_KEY." "$T" OPENAI_API_KEY=
+_teof_check "hidden key prompt" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
 
 T="$TMPROOT/teof-ns"; _teof_setup "$T" 200
-_teof_check "plain prompt" "Re-run with --yes, or export MEM0_USER_ID." "$T" \
+_teof_check "plain prompt" "Re-run with --yes to take the defaults (export MEM0_USER_ID first to choose your own)." "$T" \
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=
 
 T="$TMPROOT/teof-cu"; _teof_setup "$T" 200
 printf 'UM_CONTAINER_USER=1001:1001\n' > "$T/server/.env"
-_teof_check "container user change" "or export UM_CONTAINER_USER=1001:1001 to keep it." "$T" \
+_teof_check "container user change" "to keep 1001:1001, export UM_CONTAINER_USER=1001:1001 and re-run with --yes." "$T" \
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" \
   UM_CONTAINER_USER=1002:1002 UM_SKIP_KEY_VALIDATION=1
 
 T="$TMPROOT/teof-401"; _teof_setup "$T" 401
-_teof_check "rejected key" "Export a valid UM_OPENAI_API_KEY and re-run." "$T" \
+_teof_check "rejected key" "Export a valid UM_OPENAI_API_KEY and re-run with --yes." "$T" \
   OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
 
 T="$TMPROOT/teof-env"; _teof_setup "$T" 200
