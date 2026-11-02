@@ -588,10 +588,11 @@ TTR_LAST=$(tail -n 1 "$INSTALLER" | wc -c | tr -d ' ')
 for TTR_CUT in 1000 $((TTR_SIZE - TTR_LAST)); do
   rm -f "$TTR/server-ran"
   TTR_EXIT=0
-  head -c "$TTR_CUT" "$INSTALLER" | env PATH="$TTR/bin:/usr/bin:/bin" HOME="$TTR" OPENAI_API_KEY=sk-test \
-    UM_INSTALL_DIR="$TTR/repo" bash -s -- --server --yes > /dev/null 2> "$TTR/err" || TTR_EXIT=$?
-  # The failure must be bash refusing to parse, not a launch error (126/127).
-  if [ "$TTR_EXIT" -ne 0 ] && grep -q "syntax error" "$TTR/err" && [ ! -e "$TTR/server-ran" ]; then pass "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE runs nothing and fails to parse (exit $TTR_EXIT)"; else fail "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE exited $TTR_EXIT (server step ran: $([ -e "$TTR/server-ran" ] && echo yes || echo no); stderr: $(head -1 "$TTR/err"))"; fi
+  head -c "$TTR_CUT" "$INSTALLER" | env PATH="$TTR/bin:/usr/bin:/bin" HOME="$TTR" LC_ALL=C OPENAI_API_KEY=sk-test \
+    UM_INSTALL_DIR="$TTR/repo" bash -s -- --server --yes > "$TTR/out" 2>&1 || TTR_EXIT=$?
+  # Nothing ran: bash refused to parse (not a launch error, 126/127) and printed
+  # nothing else, and the server step never started.
+  if [ "$TTR_EXIT" -ne 0 ] && grep -q "syntax error" "$TTR/out" && ! grep -qv "syntax error" "$TTR/out" && [ ! -e "$TTR/server-ran" ]; then pass "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE runs nothing and fails to parse (exit $TTR_EXIT)"; else fail "T-TRUNCATED: cut at byte $TTR_CUT of $TTR_SIZE exited $TTR_EXIT (server step ran: $([ -e "$TTR/server-ran" ] && echo yes || echo no); output: $(head -3 "$TTR/out" | tr '\n' ' '))"; fi
 done
 rm -rf "$TTR"
 
