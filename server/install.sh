@@ -108,8 +108,6 @@ _um_cleanup() {
 		rm -f "$_UM_TMP_KEYFILE" 2>/dev/null || true
 		_UM_TMP_KEYFILE=""
 	fi
-	# --verify's staging HOME; its own end-of-run rm never runs after a signal.
-	if [ -n "${_SMOKE_HOME:-}" ]; then rm -rf "$_SMOKE_HOME" 2>/dev/null || true; fi
 }
 trap _um_cleanup EXIT
 # A signal ends the run (the EXIT trap still cleans up). A trap that only
@@ -548,6 +546,14 @@ if [ "${1:-}" = "--verify" ]; then
   # the in-container node + better-sqlite3 DELETE idiom (#267 spec D4/§14).
   _HOOK_SCRIPT="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/stop.sh"
   _SMOKE_HOME=$(mktemp -d 2>/dev/null || echo "")
+  # The cleanup step below, also run on exit: a signal ends the run before it.
+  # Set only here, once this run has made its own dir, and one rm, so a second
+  # signal cannot stop it halfway.
+  # shellcheck disable=SC2329  # invoked indirectly by the trap below
+  _verify_cleanup() {
+    rm -rf ${_SMOKE_HOME:+"$_SMOKE_HOME"} "$_VAULT/captures/install-verify" 2>/dev/null || true
+  }
+  trap '_um_cleanup; _verify_cleanup' EXIT
 
   # Same interpreter probe as the hooks' um_find_python: bare python3/python
   # on Windows are often Store app-execution-alias stubs; only a candidate
@@ -639,11 +645,11 @@ print(json.dumps({
   fi
 
   # ── cleanup ───────────────────────────────────────────────────────────────
-  if [ -n "$_SMOKE_HOME" ]; then rm -rf "$_SMOKE_HOME" 2>/dev/null || true; fi
   # The POSTed smoke turn also lands server-side in the vault raw capture for
   # the install-verify project — remove it like the pre-#159 verify did. The
   # counters row + any already-indexed point are accepted best-effort residue.
-  rm -rf "$_VAULT/captures/install-verify" 2>/dev/null || true
+  _verify_cleanup
+  trap _um_cleanup EXIT
   _vpass "cleanup" "removed smoke scratch dir + vault captures/install-verify"
 
   # ── versions ──────────────────────────────────────────────────────────────

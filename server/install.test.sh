@@ -2720,11 +2720,15 @@ assert_contains "TEOF key with a trailing space: refused, not trimmed" "$TEOF_OU
 T="$TMPROOT/teof-yes-rewrites"; _teof_setup "$T" 200
 printf 'OPENAI_API_KEY=sk-kept\nMEM0_USER_ID=myns\nMEM0_MCP_PORT=6337\nUM_VAULT_DIR=%s\nUM_AUTH_TOKEN=tok-kept\n' \
   "$T/vault" > "$T/server/.env"
+# _SMOKE_HOME is --verify's scratch dir; one in the caller's environment is
+# not this run's, so the run's cleanup leaves it alone.
+mkdir -p "$T/not-ours"
 TEOF_RC=0
 env -i PATH="$T/bin:/usr/bin:/bin" _UM_REPO_ROOT="$REPO_ROOT" CLAUDE_PLUGINS_DIR="$T/plugins" \
-  SHELL=/bin/bash HOME="$T/home" UM_SKIP_KEY_VALIDATION=1 \
+  SHELL=/bin/bash HOME="$T/home" UM_SKIP_KEY_VALIDATION=1 _SMOKE_HOME="$T/not-ours" \
   bash "$T/server/install.sh" --yes </dev/null > "$T/install.out" 2>&1 || TEOF_RC=$?
 assert_exit_zero "TEOF --yes over a .env: exits 0" "$TEOF_RC"
+assert_file_exists "TEOF --yes over a .env: an inherited _SMOKE_HOME survives the run" "$T/not-ours"
 assert_eq "TEOF --yes over a .env: rewrites the settings it was warned about" \
   "$(grep -E '^(OPENAI_API_KEY|MEM0_USER_ID|MEM0_MCP_PORT|UM_VAULT_DIR|UM_AUTH_TOKEN)=' "$T/server/.env" | tr '\n' ' ')" \
   "OPENAI_API_KEY= MEM0_USER_ID=default MEM0_MCP_PORT=6335 UM_VAULT_DIR=$T/home/.um/vault UM_AUTH_TOKEN=tok-kept "
@@ -2734,7 +2738,9 @@ assert_eq "TEOF --yes over a .env: rewrites the settings it was warned about" \
 # to, gets TERM once <path> (a file, or a directory searched whole) contains
 # <text>. Sets TEOF_SEEN (1 if <text> showed up in time), TEOF_RC and TEOF_OUT.
 # TERM because a background job ignores SIGINT; a fifo because a helper
-# process holding a pipe would be one more pid to find and kill.
+# process holding a pipe would be one more pid to find and kill. The wait is
+# bounded: an install that shrugs TERM off (the bug the first case pins) would
+# otherwise read the fifo forever, so the fifo is closed and then KILL sent.
 _teof_signal() {
   local t="$1" path="$2" text="$3" pid; shift 3
   local vars=() args=()
@@ -2754,8 +2760,10 @@ _teof_signal() {
     sleep 0.1
   done
   kill -TERM "$pid" 2>/dev/null || true
-  TEOF_RC=0; wait "$pid" || TEOF_RC=$?
+  for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
   exec 4>&-
+  if kill -0 "$pid" 2>/dev/null; then sleep 2; kill -KILL "$pid" 2>/dev/null || true; fi
+  TEOF_RC=0; wait "$pid" || TEOF_RC=$?
   TEOF_OUT=$(cat "$t/install.out")
 }
 
@@ -2785,9 +2793,12 @@ assert_eq "TEOF signal during the key probe: exits 130" "$TEOF_RC" "130"
 assert_eq "TEOF signal during the key probe: leaves no key file" \
   "$(grep -rlF Authorization "$T/tmp" 2>/dev/null)" ""
 
-# --verify stages a smoke HOME in a temp dir. This py stands in for the first
-# interpreter --verify probes once that dir exists, and holds the run there.
+# --verify stages a smoke HOME in a temp dir, and its smoke turn lands in the
+# vault's captures/install-verify; both go at the end of the run, and at a
+# signal too. This py stands in for the first interpreter --verify probes once
+# the dir exists, and holds the run there.
 T="$TMPROOT/teof-signal-verify"; _teof_setup "$T" 200; mkdir -p "$T/tmp"
+mkdir -p "$T/vault/captures/install-verify"; touch "$T/vault/captures/install-verify/turn.md"
 mkdir -p "$T/plugins/cache/universal-memory/universal-memory"
 cp -r "$PLUGIN_SRC" "$T/plugins/cache/universal-memory/universal-memory/1.8.1"
 cat > "$T/bin/py" <<'FAKE'
@@ -2802,6 +2813,8 @@ _teof_signal "$T" "$T/bin/py-ran" "staged" TMPDIR="$T/tmp" MEM0_MCP_PORT=6335 \
 assert_eq "TEOF signal during --verify: the smoke dir was staged first" "$TEOF_SEEN" "1"
 assert_eq "TEOF signal during --verify: exits 130" "$TEOF_RC" "130"
 assert_eq "TEOF signal during --verify: leaves no smoke dir" "$(ls -A "$T/tmp")" ""
+assert_eq "TEOF signal during --verify: leaves no smoke capture in the vault" \
+  "$(ls -A "$T/vault/captures" 2>/dev/null)" ""
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
