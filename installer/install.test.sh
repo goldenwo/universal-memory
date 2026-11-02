@@ -556,9 +556,9 @@ rm -rf "$TSU"
 
 # ─── T-PIPED-STDIN: a step that reads stdin cannot take the piped installer ──
 # Under curl | bash -s, the installer's own text is bash's stdin, read as the
-# script runs. server/install.sh's config check (compose run) reads stdin, so it
-# took the rest of the installer: the plugin and CLI steps never ran, and the
-# install still exited 0 (found in the v1.30.1 Pi deploy, 2026-11-01).
+# script runs. A step that reads stdin (server/install.sh's config check did,
+# #403) took the rest of the installer: the later steps never ran, and the
+# install still exited 0.
 echo ""
 echo "=== T-PIPED-STDIN: a piped install runs every step when one reads stdin ==="
 TPS=$(mktemp -d)

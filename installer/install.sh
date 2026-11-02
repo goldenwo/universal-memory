@@ -31,7 +31,8 @@
 # curl | bash -s the script is bash's stdin, read as it ran: a step that reads
 # stdin (server/install.sh's compose run did) took the rest, so the later steps
 # never ran and the install still exited 0. A download cut off past the first
-# line now runs nothing and fails on bash's syntax error.
+# line now runs nothing: bash cannot parse it. The cost: a shopt or alias set
+# in here does not reach code in the group, which was parsed before it ran.
 set -euo pipefail
 
 REPO="${UM_REPO_URL:-https://github.com/goldenwo/universal-memory.git}"
