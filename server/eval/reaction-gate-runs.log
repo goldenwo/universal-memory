@@ -81,3 +81,29 @@ the tracked, tamper-evident artifact that satisfies the frozen §D protocol; the
 is local-only. MUST be listed in the phase-2 results doc.
 ORIGIN: 2026-08-05 undated-decay-asymmetry spec §5.3 / D-9; surfaced by round 1 of that
 arc's paired-Opus review, which found the claimed "standing binding" did not exist.
+
+── CHECK 1 (2026-11-03) — R2 T-B backstop check → PARK-SPARSE (terminal) ──
+KIND: R2 trigger check, the first on/after 2026-11-01, inside the T-B window
+2026-11-01..2026-11-15 (on time). No earlier trigger check was run, so the at-most-one-per-
+7-days limit holds.
+T_FREEZE: 2026-11-03T02:52:39.483Z — the start of an online better-sqlite3 backup of the
+Pi's live ledger DB (/history/um-counters.db), taken inside um-server 1.30.2. The backup IS
+the snapshot (R1 snapshot-is-check).
+FRAME: 2026-08-01T00:00:00.000Z .. 2026-10-27T02:52:39.483Z (T_freeze − 7 days).
+STAGE REACHED: trigger evaluation only. Stage 2 not entered: no labeling, no gate evaluation.
+ARTIFACTS: snapshot sha256 de0679b519d6d934eb235b42ce37696a0625685aa1e7f60c6c0f7a101842b7ff
+(kept on the Pi); harness reaction-gate-eval.mjs sha256
+24c3e3b8e318fd9756ddaa6504b413e07f27b93b5f23d78b3bd225c4a1aa3521; H1 ok (rule hash matches
+the 61d6965b anchor); read-path env ok.
+COUNTS (stratum counts only): capture_ledger 5 rows, reaction_state 3, exchange_tally 0.
+In frame: 1 row (surface mem0-compat, operator user, abstained).
+S1 0 | S2 pool 0 | S3 0 | S4 1 | n_zeroed 0 | scoped reacted 0 | unscoped reacted 0.
+Reacted reaction_state rows by ISO week (updated_at): 2026-W31 3, all before W_start.
+BASE RATES (live rows + tally): 1 in-frame exchange; r(stored) 0, r(abstained) 1.
+OUTCOME: PARK-SPARSE (terminal). |S1| = 0 < 10, and unscoped reacted = 0 < 10, so the R1
+scope guard holds. Re-opening requires a NEW pre-registration. Context, not a gate input:
+the Discord bot whose replies drew the reactions was retired 2026-09-27.
+MECHANICS NOTE: the first read of the snapshot failed with SQLITE_CANTOPEN before any count
+was computed (a WAL-mode database cannot be opened from a read-only mount). The counts above
+come from a byte-identical writable copy of the SAME snapshot (sha256 equal before and
+after the read), so this is one check with one T_freeze.
