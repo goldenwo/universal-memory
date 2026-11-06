@@ -1253,15 +1253,18 @@ export UM_AUTH_TOKEN
 # <var> is emptied first: a read that cannot read at all (stdin open write-only,
 # as nohup leaves it) assigns nothing, and the 401 re-entry then took the
 # rejected key it still held for an answer and validated it again forever.
-# Stdin ending is never an answer, not even the prompt's default: whether an
-# install with no terminal takes the defaults is the operator's product call
-# (#404), and --yes is how a run says so.
+# Stdin ending is never an answer, not even the prompt's default: a cut-off script
+# must not finish an install on defaults (the operator's call, #407), and --yes is
+# how a run says so.
 # With a .env in place, --yes alone is not a safe way out: it takes the
 # namespace, port, vault and keys from the environment or the defaults (the
 # TEOF --yes case pins which). --upgrade is named only for an install that was
 # there before this run; one this run is creating has no stack yet.
+# With no .env yet, the same goes for answers this run was given: a --yes re-run
+# reads none of them. _UM_ANSWERED holds their names for this message.
+_UM_ANSWERED=''
 _um_read() {
-	local _um_hide='' _um_env_note='' _um_ifs="$IFS"
+	local _um_hide='' _um_keep_note='' _um_ifs="$IFS"
 	while :; do
 		case "$1" in
 			-s) _um_hide=-s; shift ;;
@@ -1273,13 +1276,15 @@ _um_read() {
 	printf -v "$1" '%s' ''
 	IFS=$_um_ifs read -r ${_um_hide:+"$_um_hide"} "$1" || [ -n "${!1}" ] || {
 		if [ -f "$ENV_FILE" ]; then
-			_um_env_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first."
+			_um_keep_note=" But --yes rewrites most of the settings in $ENV_FILE from your environment or the defaults (MEM0_USER_ID, MEM0_MCP_PORT, UM_VAULT_DIR and the API keys among them): export the ones to keep first."
 			if [ "$UM_WAS_EXISTING_INSTALL" = "1" ]; then
-				_um_env_note+=" To upgrade this install instead, run: bash $(printf '%q' "$SCRIPT_DIR/install.sh") --upgrade"
+				_um_keep_note+=" To upgrade this install instead, run: bash $(printf '%q' "$SCRIPT_DIR/install.sh") --upgrade"
 			fi
+		elif [ -n "$_UM_ANSWERED" ]; then
+			_um_keep_note=" The answers you already gave are not kept either: export$_UM_ANSWERED first to keep them."
 		fi
 		echo >&2
-		fail "No answer to that prompt: stdin ended. $_um_way_out (From curl, pass flags as: curl ... | bash -s -- --yes)$_um_env_note"
+		fail "No answer to that prompt: stdin ended. $_um_way_out (From curl, pass flags as: curl ... | bash -s -- --yes)$_um_keep_note"
 	}
 }
 
@@ -1312,6 +1317,8 @@ prompt() {
 			warn "Required. Please enter a value."
 		fi
 	done
+	# A default taken here is the one --yes takes, so only a typed answer can be lost.
+	[ "$val" = "$default" ] || _UM_ANSWERED+=" $var"
 	# $var is always a hardcoded literal from this script — never user input.
 	# Indirect expansion ("${!var:-}") and this eval are safe here.
 	eval "$var=\$val"
@@ -1499,6 +1506,8 @@ else
 				fail "OpenAI API rejected this key (401). Set UM_OPENAI_API_KEY to a valid key and retry."
 			fi
 			warn "OpenAI API rejected this key (401). Please re-enter."
+			# The way out below asks for a valid key, so this one is not worth keeping.
+			_UM_ANSWERED=${_UM_ANSWERED/ OPENAI_API_KEY/}
 			printf 'UM_OPENAI_API_KEY (input hidden): ' >&2
 			_um_read -w -s _key_to_validate "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
 			echo >&2
