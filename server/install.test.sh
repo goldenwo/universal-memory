@@ -3061,6 +3061,130 @@ TQ_OUT=$(env -i PATH="$T/bin:/usr/bin:/bin" _UM_REPO_ROOT="$T/repo" HOME="$T/hom
   _UM_HEALTH_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 bash "$TQ_SH" --upgrade 2>&1) || true
 _tq_paste "CLI refresh" "Re-run it yourself:" "bash " "$TQ_OUT" "$T/repo/installer/install-cli.sh"
 
+# ─── TPTY: a hidden prompt hides what is typed, on a real terminal ───────────
+# read -s only does anything on a terminal, and every other case here feeds
+# stdin from a pipe, so nothing noticed if a key prompt lost it. These cases run
+# the install on a pty and type the answers at the prompts: a terminal echoes
+# what is typed, so an answer shows up in what the terminal printed unless the
+# prompt turned echo off.
+# Windows' Python has no pty module; CI's Linux and macOS runners run these, and
+# there a missing module fails the case instead of skipping it.
+echo ""
+echo "=== TPTY: the key prompts hide what is typed on a terminal ==="
+cat > "$TMPROOT/pty-drive.py" <<'PY'
+# pty-drive.py <transcript> <prompt> <answer> [<prompt> <answer>...] -- <command...>
+# Runs <command> on a new terminal, types each <answer> once its <prompt> has been
+# printed, writes all the terminal printed to <transcript>, and exits with the
+# command's status (125 if a prompt never came, 124 if the command hung).
+import os, pty, select, signal, sys, termios, time
+
+args = sys.argv[1:]
+sep = args.index('--')
+transcript, pairs, command = args[0], args[1:sep], args[sep + 1:]
+steps = list(zip(pairs[::2], pairs[1::2]))
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(command[0], command)
+
+
+def echo_on():
+    try:
+        return bool(termios.tcgetattr(fd)[3] & termios.ECHO)
+    except termios.error:
+        return True
+
+
+def settle():
+    # A hidden prompt prints, then turns echo off. Typing in that gap would echo
+    # for a reason that has nothing to do with the prompt, so give it the chance.
+    end = time.time() + 2
+    while echo_on() and time.time() < end:
+        time.sleep(0.05)
+
+
+def save():
+    with open(transcript, 'wb') as out:
+        out.write(seen)
+
+
+seen = b''
+searched = 0
+deadline = time.time() + 120
+while True:
+    if time.time() > deadline:
+        os.kill(pid, signal.SIGKILL)
+        save()
+        sys.exit(124)
+    ready, _, _ = select.select([fd], [], [], 0.2)
+    if ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:  # Linux: EIO once the command's side has closed
+            break
+        if not chunk:
+            break
+        seen += chunk
+    if steps:
+        at = seen.find(steps[0][0].encode(), searched)
+        if at >= 0:
+            searched = at + len(steps[0][0])
+            settle()
+            os.write(fd, steps.pop(0)[1].encode() + b'\n')
+
+_, status = os.waitpid(pid, 0)
+save()
+if steps:
+    sys.stderr.write('prompt never came: %s\n' % steps[0][0])
+    sys.exit(125)
+sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
+PY
+# _tpty_run <dir>: the install from <dir> on a terminal. This curl rejects the
+# first key, so both hidden prompts come up: the key, then its re-entry. Sets
+# TPTY_RC and TPTY_SEEN (all the terminal printed).
+_tpty_run() {
+  local t="$1"
+  TPTY_RC=0
+  python3 "$TMPROOT/pty-drive.py" "$t/transcript" \
+    "OpenAI API key (input hidden)" "sk-HIDDEN-FIRST" \
+    "Memory namespace" "VISIBLE-NS" \
+    "UM_OPENAI_API_KEY (input hidden)" "sk-HIDDEN-SECOND" \
+    "[Y/n]" "n" \
+    -- env PATH="$t/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" OPENAI_API_KEY= UM_OPENAI_API_KEY= MEM0_USER_ID= \
+    MEM0_MCP_PORT=6335 UM_VAULT_DIR="$t/vault" CLAUDE_PLUGINS_DIR="$t/plugins" SHELL=/bin/bash HOME="$t/home" \
+    bash "$t/server/install.sh" </dev/null > "$t/drive.out" 2>&1 || TPTY_RC=$?
+  TPTY_SEEN=$(cat "$t/transcript" 2>/dev/null || true)
+}
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo "  SKIP: TPTY (no pty for Windows' Python; CI's Linux and macOS runners run it)"
+    ;;
+  *)
+    T="$TMPROOT/tpty"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+    _tpty_run "$T"
+    assert_exit_zero "TPTY: the install finishes" "$TPTY_RC"
+    if [ "$TPTY_RC" -ne 0 ]; then cat "$T/drive.out"; printf '%s\n' "$TPTY_SEEN" | tail -20; fi
+    assert_eq "TPTY: the first key reached .env" "$(grep -E '^OPENAI_API_KEY=' "$T/server/.env")" "OPENAI_API_KEY=sk-HIDDEN-FIRST"
+    assert_eq "TPTY: the re-entered key reached .env" "$(grep -E '^UM_OPENAI_API_KEY=' "$T/server/.env")" "UM_OPENAI_API_KEY=sk-HIDDEN-SECOND"
+    # Without this the two below could pass on a terminal that echoes nothing.
+    assert_contains "TPTY: a plain prompt's answer shows" "$TPTY_SEEN" "VISIBLE-NS"
+    assert_not_contains "TPTY: the key prompt hides what is typed" "$TPTY_SEEN" "sk-HIDDEN-FIRST"
+    assert_not_contains "TPTY: the 401 re-entry hides what is typed" "$TPTY_SEEN" "sk-HIDDEN-SECOND"
+
+    # The same run with -s taken out of _um_read: the cases above must be able to
+    # fail. If this sed stops matching, this case says so.
+    T="$TMPROOT/tpty-control"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+    sed 's/read -r \${_um_hide:+"\$_um_hide"}/read -r/' "$INSTALL_SH" > "$T/server/install.sh"
+    if cmp -s "$INSTALL_SH" "$T/server/install.sh"; then
+      fail_test "TPTY control: takes -s out of _um_read" "the sed no longer matches install.sh"
+    else
+      _tpty_run "$T"
+      assert_contains "TPTY control: without -s the key shows" "$TPTY_SEEN" "sk-HIDDEN-FIRST"
+      assert_contains "TPTY control: without -s the re-entered key shows" "$TPTY_SEEN" "sk-HIDDEN-SECOND"
+    fi
+    ;;
+esac
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
