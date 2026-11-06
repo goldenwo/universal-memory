@@ -873,6 +873,21 @@ if [ "$(wc -l < "$TPP/steps-ran" | tr -d ' ')" = "4" ]; then pass "T-PREPUSH-STD
 if [ -s "$TPP/steps-stdin" ]; then fail "T-PREPUSH-STDIN: a step read git's ref lines: $(cat "$TPP/steps-stdin")"; else pass "T-PREPUSH-STDIN: no step read git's ref lines"; fi
 rm -rf "$TPP"
 
+# ─── T-YES-REFUSAL: a piped install is told a way forward it can take ────────
+# The refusal offered "run interactively without --yes", which a piped install
+# cannot do: its stdin is the script, and every prompt would fail.
+echo ""
+echo "=== T-YES-REFUSAL: --yes with no key, from curl | bash ==="
+TYR=$(mktemp -d)
+make_stubs "$TYR/bin"
+TYR_EXIT=0
+TYR_OUT=$(env -i PATH="$TYR/bin:/usr/bin:/bin" HOME="$TYR" "$REAL_BASH" -s -- --server --yes < "$INSTALLER" 2>&1) || TYR_EXIT=$?
+if [ "$TYR_EXIT" -ne 0 ]; then pass "T-YES-REFUSAL: refuses"; else fail "T-YES-REFUSAL: exited 0"; fi
+for _want in "--yes mode requires API key(s)" "set UM_OPENAI_API_KEY" "A piped install" "no terminal to ask on" "without --yes"; do
+  if [[ "$TYR_OUT" == *"$_want"* ]]; then pass "T-YES-REFUSAL: says '$_want'"; else fail "T-YES-REFUSAL: does not say '$_want': $TYR_OUT"; fi
+done
+rm -rf "$TYR"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
