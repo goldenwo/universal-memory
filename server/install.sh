@@ -993,13 +993,14 @@ if [ "${1:-}" = "--upgrade" ]; then
 		export UM_IMAGE="$_UPG_ROLLBACK_REF"
 		_UPG_RB_RC=0
 		_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_RB_RC=$?
+		# A failed compose up says nothing about what is running: it can stop before
+		# it touches the container, leaving the old one serving. It started nothing
+		# to wait for, so one probe answers that.
+		_UPG_RB_ATTEMPTS="$_UM_POLL_ATTEMPTS"
+		[ "$_UPG_RB_RC" -eq 0 ] || _UPG_RB_ATTEMPTS=1
 		_UPG_RB_POLL_RC=0
-		if [ "$_UPG_RB_RC" -eq 0 ]; then
-			_um_poll_health "$_UPG_HEALTH" "$_UM_POLL_ATTEMPTS" || _UPG_RB_POLL_RC=$?
-		else
-			_UPG_RB_POLL_RC=1
-		fi
-		if [ "$_UPG_RB_POLL_RC" -eq 0 ]; then
+		_um_poll_health "$_UPG_HEALTH" "$_UPG_RB_ATTEMPTS" || _UPG_RB_POLL_RC=$?
+		if [ "$_UPG_RB_RC" -eq 0 ] && [ "$_UPG_RB_POLL_RC" -eq 0 ]; then
 			echo ""
 			_uok "ROLLBACK SUCCEEDED — ${_UPG_ROLLBACK_TAG:-the previous image} is running and healthy at $_UPG_HEALTH."
 			_uwarn "The upgrade to $_UPG_IMAGE did NOT take. Check the logs above before retrying."
@@ -1011,12 +1012,17 @@ if [ "${1:-}" = "--upgrade" ]; then
 			_uwarn "  add UM_IMAGE=$_UPG_ROLLBACK_REF (or a known-good UM_VERSION) to $ENV_FILE"
 			exit 1
 		fi
-		echo ""
-		_ufail "ROLLBACK FAILED — the server is DOWN and needs a hand.
-  Recover manually:
+		_UPG_RB_RECOVER="  Recover manually:
     cd $SCRIPT_DIR && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d
     curl $_UPG_HEALTH
   Then check: $(_compose_hint 'logs memory-server')"
+		echo ""
+		if [ "$_UPG_RB_POLL_RC" -eq 0 ]; then
+			_ufail "ROLLBACK FAILED — compose up -d failed (exit $_UPG_RB_RC), but the server still answers at $_UPG_HEALTH. Which image it is running is not confirmed.
+$_UPG_RB_RECOVER"
+		fi
+		_ufail "ROLLBACK FAILED — the server is DOWN and needs a hand.
+$_UPG_RB_RECOVER"
 	fi
 
 	# ── Post-success: refresh the um CLI ─────────────────────────────────────

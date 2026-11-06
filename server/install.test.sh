@@ -943,6 +943,7 @@ fi
 #   FAKE_OLD_ID        image ID reported for the running container
 #   FAKE_OLD_TAG       image tag reported for the running container
 #   FAKE_READ_STDIN    1 ⇒ every call reads its stdin, as compose's prompts do
+#   FAKE_UP_RC         non-zero ⇒ every `compose up -d` fails
 make_fake_docker_upgrade() {
   local dest="$1"
   mkdir -p "$dest"
@@ -958,6 +959,10 @@ case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
 esac
+if [[ "$args" == *" up -d"* ]] && [ "${FAKE_UP_RC:-0}" != "0" ]; then
+  echo "Error response from daemon: driver failed programming external connectivity" >&2
+  exit "$FAKE_UP_RC"
+fi
 # Pre-start config check (#400): `compose ... run --rm --no-deps -T ... memory-server ...`.
 # FAKE_ENVCHECK_RC=1 models the target image refusing the configuration.
 if [[ "$args" == compose*" run "*"memory-server"* ]]; then
@@ -1413,6 +1418,49 @@ assert_exit_zero "T29c: still runs" "$T29C_EXIT"
 assert_contains "T29c: warns the legacy file is inert" "$T29C_OUT" "NO LONGER APPLIED"
 assert_contains "T29c: gives the rename command" "$T29C_OUT" "docker-compose.override.yml"
 rm -f "$T29C/server/docker-compose.local.yml"
+
+# ─── T29d: a rollback whose compose up failed is checked before it says DOWN ─
+# compose up can fail before it touches the container (a daemon error, a port
+# conflict), so the old one is still serving. The rollback's compose up then fails
+# the same way, and the run told its operator the server was DOWN without asking.
+echo ""
+echo "=== T29d: compose up fails during the rollback, and the server still answers ==="
+T29D="$TMPROOT/t29d"
+mkdir -p "$T29D/server"
+make_fakebin "$T29D/bin" 200
+make_fake_docker_upgrade "$T29D/bin"
+T29D_SH=$(make_isolated_server "$T29D/server")
+T29D_EXIT=0
+T29D_OUT=$(run_upgrade "$T29D/bin" "$T29D_SH" "$T29D/docker.log" FAKE_UP_RC=1 -- --upgrade) || T29D_EXIT=$?
+assert_exit_nonzero "T29d: exits non-zero" "$T29D_EXIT"
+assert_eq "T29d: both the swap and the rollback tried compose up" "$(grep -c -- ' up -d' "$T29D/docker.log")" "2"
+assert_contains "T29d: says the rollback's compose up failed" "$T29D_OUT" "ROLLBACK FAILED — compose up -d failed (exit 1)"
+assert_contains "T29d: says the server still answers" "$T29D_OUT" "still answers at http://localhost:6335/health"
+assert_not_contains "T29d: does not call the server DOWN" "$T29D_OUT" "DOWN"
+assert_not_contains "T29d: does not claim the rollback worked" "$T29D_OUT" "ROLLBACK SUCCEEDED"
+assert_contains "T29d: prints the recovery command" "$T29D_OUT" "UM_IMAGE=um-rollback:previous docker compose up -d"
+
+echo ""
+echo "=== T29e: compose up fails during the rollback, and nothing answers ==="
+T29E="$TMPROOT/t29e"
+mkdir -p "$T29E/server"
+make_fakebin "$T29E/bin" 200
+make_fake_docker_upgrade "$T29E/bin"
+cat > "$T29E/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "$*" == *"/health"* ]]; then echo probe >> "$(dirname "$0")/health-probes"; exit 7; fi
+exit 0
+FAKE
+chmod +x "$T29E/bin/curl"
+T29E_SH=$(make_isolated_server "$T29E/server")
+T29E_EXIT=0
+# A ceiling of 5: a failed compose up starts nothing, so there is nothing to wait
+# for, and this outage should not spend its first minutes on a timer.
+T29E_OUT=$(run_upgrade "$T29E/bin" "$T29E_SH" "$T29E/docker.log" FAKE_UP_RC=1 _UM_HEALTH_POLL_ATTEMPTS=5 -- --upgrade) || T29E_EXIT=$?
+assert_exit_nonzero "T29e: exits non-zero" "$T29E_EXIT"
+assert_contains "T29e: says the server is DOWN" "$T29E_OUT" "ROLLBACK FAILED — the server is DOWN"
+assert_eq "T29e: asked the server once before saying so" "$(wc -l < "$T29E/bin/health-probes" 2>/dev/null | tr -d ' ')" "1"
+assert_contains "T29e: prints the recovery command" "$T29E_OUT" "UM_IMAGE=um-rollback:previous docker compose up -d"
 
 # ─── T30: health URL comes from compose, not from MEM0_MCP_PORT ──────────────
 # A host override can REPLACE the published ports, so a URL derived from
