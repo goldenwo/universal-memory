@@ -944,6 +944,7 @@ fi
 #   FAKE_OLD_TAG       image tag reported for the running container
 #   FAKE_READ_STDIN    1 ⇒ every call reads its stdin, as compose's prompts do
 #   FAKE_UP_RC         non-zero ⇒ every `compose up -d` fails
+#   FAKE_UP_SLEEP      seconds every `compose up -d` takes
 make_fake_docker_upgrade() {
   local dest="$1"
   mkdir -p "$dest"
@@ -959,6 +960,7 @@ case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
 esac
+if [[ "$args" == *" up -d"* ]] && [ -n "${FAKE_UP_SLEEP:-}" ]; then sleep "$FAKE_UP_SLEEP"; fi
 if [[ "$args" == *" up -d"* ]] && [ "${FAKE_UP_RC:-0}" != "0" ]; then
   echo "Error response from daemon: driver failed programming external connectivity" >&2
   exit "$FAKE_UP_RC"
@@ -2977,6 +2979,87 @@ assert_eq "TEOF signal during --verify: exits 130" "$TEOF_RC" "130"
 assert_eq "TEOF signal during --verify: leaves no smoke dir" "$(_teof_made_left "$T")" ""
 assert_eq "TEOF signal during --verify: leaves no smoke capture in the vault" \
   "$(ls -A "$T/vault/captures" 2>/dev/null)" ""
+
+# ─── TQ: a recovery command prints its paths so a shell can take them back ───
+# A checkout or home whose path has a space (a Windows user name, say) printed
+# `cd /c/Users/First Last/server && docker compose up -d`, which does not run.
+# Each case runs the printed command as someone pasting it would, with docker,
+# source and bash as functions here: they do nothing, and no PATH can get round
+# a function, so no real stack is reached.
+echo ""
+echo "=== TQ: recovery commands still run when the path has a space ==="
+# _tq_paste <case> <the line has> <the command starts with> <text> <want>: <want>
+# is what the command reached: the directory docker ran in, or the path that
+# source or bash was given.
+_tq_paste() {
+  local name="$1" has="$2" from="$3" text="$4" want="$5" line got
+  line=$(printf '%s\n' "$text" | grep -F -- "$has" | head -1 || true)
+  got=$(
+    docker() { printf '%s' "$PWD"; }
+    source() { printf '%s' "$1"; }
+    bash() { printf '%s' "$1"; }
+    eval "$from${line#*"$from"}" 2>/dev/null
+  ) || true
+  assert_eq "TQ $name: reaches $want" "$got" "$want"
+}
+# The vault's path may not hold whitespace, so it stays out of the spaced dir.
+TQ_VAULT="$TMPROOT/tq-vault"
+
+T="$TMPROOT/tq spaced"; _ce_setup "$T"
+TQ_EXIT=0
+TQ_OUT=$(_ce_install "$T" UM_VAULT_DIR="$TQ_VAULT") || TQ_EXIT=$?
+assert_exit_zero "TQ install: exits 0" "$TQ_EXIT"
+_tq_paste "banner's stop" "Stop the stack:" "cd " "$TQ_OUT" "$T/server"
+_tq_paste "banner's restart" "Restart later:" "cd " "$TQ_OUT" "$T/server"
+_tq_paste "first profile write" "Reload your shell" "source " "$TQ_OUT" "$T/home/.bashrc"
+assert_contains "TQ banner's profile line: the path is quoted" "$TQ_OUT" \
+  "Shell profile updated: source $TMPROOT/tq\\ spaced/home/.bashrc (or open"
+TQ_EXIT=0
+TQ_OUT=$(_ce_install "$T" UM_VAULT_DIR="$TQ_VAULT") || TQ_EXIT=$?
+assert_exit_zero "TQ re-run: exits 0" "$TQ_EXIT"
+_tq_paste "profile rewrite" "Reload your shell" "source " "$TQ_OUT" "$T/home/.bashrc"
+
+T="$TMPROOT/tq spaced crash"; _ce_setup "$T"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+[[ "$*" == *"/health"* ]] && exit 7
+exit 0
+FAKE
+chmod +x "$T/bin/curl"
+TQ_OUT=$(_ce_install "$T" UM_VAULT_DIR="$TQ_VAULT" FAKE_RESTART_COUNT=5 _UM_HEALTH_POLL_ATTEMPTS=1) || true
+_tq_paste "install's logs hint" "Check logs with:" "cd " "$TQ_OUT" "$T/server"
+
+# _tq_upgrade_setup <dir>: a --upgrade tree; TQ_SH is its install.sh.
+_tq_upgrade_setup() {
+  mkdir -p "$1/server" "$1/home"
+  make_fakebin "$1/bin" 200
+  make_fake_docker_upgrade "$1/bin"
+  TQ_SH=$(make_isolated_server "$1/server")
+}
+T="$TMPROOT/tq spaced upgrade"; _tq_upgrade_setup "$T"
+TQ_EXIT=0
+TQ_OUT=$(run_upgrade "$T/bin" "$TQ_SH" "$T/docker.log" -- --upgrade) || TQ_EXIT=$?
+assert_exit_zero "TQ --upgrade: exits 0" "$TQ_EXIT"
+_tq_paste "--upgrade's revert" "UM_IMAGE=um-rollback:previous docker compose up -d" "cd " "$TQ_OUT" "$T/server"
+
+T="$TMPROOT/tq spaced rollback"; _tq_upgrade_setup "$T"
+TQ_OUT=$(run_upgrade "$T/bin" "$TQ_SH" "$T/docker.log" FAKE_UP_RC=1 -- --upgrade) || true
+_tq_paste "failed rollback's recovery" "UM_IMAGE=um-rollback:previous docker compose up -d" "cd " "$TQ_OUT" "$T/server"
+_tq_paste "failed rollback's logs hint" "Then check:" "cd " "$TQ_OUT" "$T/server"
+
+T="$TMPROOT/tq spaced signal"; _tq_upgrade_setup "$T"
+_teof_signal "$T" "$T/docker.log" " up -d" FAKE_DOCKER_LOG="$T/docker.log" FAKE_UP_SLEEP=3 MEM0_MCP_PORT=6335 \
+  _UM_HEALTH_POLL_ATTEMPTS=1 -- --upgrade
+assert_eq "TQ signal during the swap: the swap was under way first" "$TEOF_SEEN" "1"
+assert_eq "TQ signal during the swap: exits 130" "$TEOF_RC" "130"
+_tq_paste "signal's roll back" "Roll back:" "cd " "$TEOF_OUT" "$T/server"
+
+T="$TMPROOT/tq spaced cli"; _tq_upgrade_setup "$T"
+mkdir -p "$T/home/.local/share/um/cli" "$T/repo/installer"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$T/repo/installer/install-cli.sh"
+TQ_OUT=$(env -i PATH="$T/bin:/usr/bin:/bin" _UM_REPO_ROOT="$T/repo" HOME="$T/home" FAKE_DOCKER_LOG="$T/docker.log" \
+  _UM_HEALTH_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 bash "$TQ_SH" --upgrade 2>&1) || true
+_tq_paste "CLI refresh" "Re-run it yourself:" "bash " "$TQ_OUT" "$T/repo/installer/install-cli.sh"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

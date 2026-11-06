@@ -50,8 +50,10 @@ LEGACY_LOCAL_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
 # Human-facing command prefix. Recovery instructions must reproduce the SAME
 # file set _compose() uses; the reliable way to do that in a copy-pasteable
 # one-liner is a bare `docker compose` scoped to this directory, letting the
-# auto-load convention above do the work.
-_compose_hint() { printf 'cd %s && docker compose %s' "$SCRIPT_DIR" "$*"; }
+# auto-load convention above do the work. Paths in a printed command go through
+# %q, so one with a space (a Windows user name, say) can still be pasted.
+_UM_SCRIPT_DIR_Q=$(printf '%q' "$SCRIPT_DIR")
+_compose_hint() { printf 'cd %s && docker compose %s' "$_UM_SCRIPT_DIR_Q" "$*"; }
 
 # v1.0 W1.4 — image-mode detection. Default is pull-from-GHCR (fast, ~20s
 # first-run). Set UM_BUILD_LOCAL=1 in the calling environment to build
@@ -850,7 +852,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 		echo "" >&2
 		if [ "${_UPG_SWAPPED:-0}" = "1" ]; then
 			printf '\033[1;31m[upgrade]\033[0m %s\n' "Interrupted AFTER the swap started — the stack may be running the new, unverified image." >&2
-			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Roll back:  cd $SCRIPT_DIR && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d" >&2
+			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Roll back:  cd $_UM_SCRIPT_DIR_Q && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d" >&2
 			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Or verify:  curl $_UPG_HEALTH" >&2
 		else
 			printf '\033[1;32m[upgrade]\033[0m %s\n' "Interrupted before the swap — your running server is untouched." >&2
@@ -1013,7 +1015,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 			exit 1
 		fi
 		_UPG_RB_RECOVER="  Recover manually:
-    cd $SCRIPT_DIR && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d
+    cd $_UM_SCRIPT_DIR_Q && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d
     curl $_UPG_HEALTH
   Then check: $(_compose_hint 'logs memory-server')"
 		echo ""
@@ -1061,7 +1063,7 @@ $_UPG_RB_RECOVER"
 			_uok "um CLI refreshed${_UPG_CLI_VER:+ to $_UPG_CLI_VER}."
 		else
 			_uwarn "CLI refresh FAILED. The server upgrade is fine and still healthy — only the CLI is stale."
-			_uwarn "  Re-run it yourself:  bash $_UPG_CLI_INSTALLER --no-path"
+			_uwarn "  Re-run it yourself:  bash $(printf '%q' "$_UPG_CLI_INSTALLER") --no-path"
 		fi
 	fi
 
@@ -1089,7 +1091,7 @@ EOF
 ║
 EOF
 	printf '║ To revert to the previous image:\n'
-	printf '║   cd %s && UM_IMAGE=%s docker compose up -d\n' "$SCRIPT_DIR" "$_UPG_ROLLBACK_REF"
+	printf '║   cd %s && UM_IMAGE=%s docker compose up -d\n' "$_UM_SCRIPT_DIR_Q" "$_UPG_ROLLBACK_REF"
 	cat <<'EOF'
 ╚═════════════════════════════════════════════════════════════════════╝
 EOF
@@ -1869,7 +1871,7 @@ _append_to_profile() {
 		_strip_marker_block "$profile"
 		_write_marker_block "$profile" "$summarizer"
 		ok "Managed block refreshed in $profile."
-		info "Reload your shell or run: source $profile"
+		info "Reload your shell or run: source $(printf '%q' "$profile")"
 		return
 	fi
 
@@ -1886,7 +1888,7 @@ _append_to_profile() {
 	_write_marker_block "$profile" "$summarizer"
 
 	ok "universal-memory settings (UM_SUMMARIZER, UM_SERVER_URL, um on PATH) added to $profile"
-	info "Reload your shell or run: source $profile"
+	info "Reload your shell or run: source $(printf '%q' "$profile")"
 }
 
 _SHELL_PROFILE=$(_detect_profile)
@@ -2014,7 +2016,7 @@ else
 fi
 _profile_hint=""
 if [ -n "$_SHELL_PROFILE" ]; then
-	_profile_hint="  Shell profile updated: source $_SHELL_PROFILE (or open a new terminal)"
+	_profile_hint="  Shell profile updated: source $(printf '%q' "$_SHELL_PROFILE") (or open a new terminal)"
 else
 	_profile_hint="  Add to your shell profile:  export UM_SUMMARIZER='$_um_summarizer_default'"
 fi
@@ -2028,8 +2030,8 @@ cat <<EOF
 ║   1. Verify the install:    bash server/install.sh --verify
 $_plugin_step
 ║   3. Upgrade later:         bash server/install.sh --upgrade
-║   4. Stop the stack:        cd $SCRIPT_DIR && docker compose down
-║   5. Restart later:         cd $SCRIPT_DIR && docker compose up -d
+║   4. Stop the stack:        cd $_UM_SCRIPT_DIR_Q && docker compose down
+║   5. Restart later:         cd $_UM_SCRIPT_DIR_Q && docker compose up -d
 ║
 ║ Data persists at: server/data/qdrant/
 ║ Edit configuration: server/.env
