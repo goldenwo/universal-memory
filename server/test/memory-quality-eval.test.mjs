@@ -300,6 +300,63 @@ test('answerCorrectnessPass: parse-fails excluded from denominators (→ null ra
   assert.equal(out.answerGrader.parseFails, 2);
 });
 
+// #408: through the bouncer's 1500 ms timeout, 6-31% of the Phase B grades came back ok:false,
+// while the same 96 queries with no timeout had 0 failures in 288 calls. This pass measures
+// whether a grade is right, not whether it is fast enough for the hot path.
+test('answerCorrectnessPass: a grade slower than the bouncer timeout still counts (#408)', async () => {
+  const saved = process.env.UM_BOUNCER_TIMEOUT_MS;
+  process.env.UM_BOUNCER_TIMEOUT_MS = '20';
+  try {
+    const doSearch = async () => ({ results: [{ id: '1', body: 'x' }] });
+    const gradeAnswer = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return { answers: true, confidence: 0.9, ok: true };
+    };
+    const out = await answerCorrectnessPass({
+      gradeAnswer, doSearch, memory: {}, recallRows: [{ id: 'a', query: 'q' }], noAnswerRows: [], model: 'm', tau: 0.05,
+    });
+    assert.equal(out.answerGrader.parseFails, 0);
+    assert.equal(out.answerCorrectness.rate, 1);
+  } finally {
+    if (saved === undefined) delete process.env.UM_BOUNCER_TIMEOUT_MS;
+    else process.env.UM_BOUNCER_TIMEOUT_MS = saved;
+  }
+});
+
+test('answerCorrectnessPass: records why each failed row failed (#408)', async () => {
+  const doSearch = async (query) => ({ results: [{ id: '1', body: query }] });
+  const gradeAnswer = async (_query, body) => {
+    if (body === 'bad json') return { answers: false, confidence: 0, ok: false, failCause: 'parse-fail', stopReason: 'length' };
+    if (body === 'api down') return { answers: false, confidence: 0, ok: false, failCause: 'invoke-error' };
+    if (body === 'hangs') return new Promise(() => {});
+    return { answers: true, confidence: 0.9, ok: true, stopReason: 'stop' };
+  };
+  const out = await answerCorrectnessPass({
+    gradeAnswer, doSearch, memory: {},
+    recallRows: [{ id: 'good', query: 'fine' }, { id: 'a', query: 'bad json' }, { id: 'b', query: 'api down' }],
+    noAnswerRows: [{ id: 'n', query: 'hangs' }],
+    model: 'm', tau: 0.05, gradeTimeoutMs: 20,
+  });
+  assert.equal(out.answerGrader.parseFails, 3, 'parseFails still counts every ok:false row, as the committed results do');
+  assert.deepEqual(out.answerGrader.failCauses, { 'parse-fail': 1, 'invoke-error': 1, 'no-response': 1 });
+  assert.deepEqual(out.answerGrader.failedRows, [
+    { id: 'a', answerable: true, failCause: 'parse-fail', stopReason: 'length' },
+    { id: 'b', answerable: true, failCause: 'invoke-error', stopReason: null },
+    { id: 'n', answerable: false, failCause: 'no-response', stopReason: null },
+  ]);
+  assert.equal(out.answerCorrectness.total, 1, 'a failed row stays out of the denominator');
+});
+
+test('answerCorrectnessPass: a clean run records no failures (#408)', async () => {
+  const doSearch = async () => ({ results: [{ id: '1', body: 'x' }] });
+  const gradeAnswer = async () => ({ answers: true, confidence: 0.9, ok: true });
+  const out = await answerCorrectnessPass({
+    gradeAnswer, doSearch, memory: {}, recallRows: [{ id: 'a', query: 'q' }], noAnswerRows: [], model: 'm', tau: 0.05,
+  });
+  assert.deepEqual(out.answerGrader.failCauses, {});
+  assert.deepEqual(out.answerGrader.failedRows, []);
+});
+
 // --- fireRate (detector supersession-recall signal) ------------------------
 
 test('fireRate: fraction of rows where the detector fired', () => {
