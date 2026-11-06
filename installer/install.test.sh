@@ -839,8 +839,8 @@ done <<< "$_readme_keys"
 # ─── T-PREPUSH-STDIN: the pre-push gate hands its suites none of git's ref lines ─
 # git writes one line per pushed ref to the hook's stdin. The hook's loop stops
 # at the first ref that fires the gate, and whatever suite read stdin next got
-# the rest. Every step here is a stub that records its stdin; docker, curl and
-# shellcheck are stubs too, first on PATH, so no real stack is touched.
+# the rest. Every step here is a stub that records its stdin. So are the tools it
+# calls (docker, curl and the linter), first on PATH, so no real stack is touched.
 echo ""
 echo "=== T-PREPUSH-STDIN: the gate's steps read none of git's leftover ref lines ==="
 TPP=$(mktemp -d)

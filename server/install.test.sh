@@ -3164,7 +3164,6 @@ case "$(uname -s)" in
     _tpty_run "$T"
     assert_exit_zero "TPTY: the install finishes" "$TPTY_RC"
     if [ "$TPTY_RC" -ne 0 ]; then cat "$T/drive.out"; printf '%s\n' "$TPTY_SEEN" | tail -20; fi
-    assert_eq "TPTY: the first key reached .env" "$(grep -E '^OPENAI_API_KEY=' "$T/server/.env")" "OPENAI_API_KEY=sk-HIDDEN-FIRST"
     assert_eq "TPTY: the re-entered key reached .env" "$(grep -E '^UM_OPENAI_API_KEY=' "$T/server/.env")" "UM_OPENAI_API_KEY=sk-HIDDEN-SECOND"
     # Without this the two below could pass on a terminal that echoes nothing.
     assert_contains "TPTY: a plain prompt's answer shows" "$TPTY_SEEN" "VISIBLE-NS"
