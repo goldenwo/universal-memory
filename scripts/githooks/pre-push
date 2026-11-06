@@ -126,6 +126,11 @@ fi
 
 # ─── Run the gate ─────────────────────────────────────────────────────────────
 
+# The loop above stops at the first ref that fires the gate, and git's remaining
+# ref lines are still on stdin. Nothing below is theirs to read. (git does not
+# mind a hook that leaves refs unread.)
+exec </dev/null
+
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
