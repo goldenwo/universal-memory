@@ -50,8 +50,10 @@ LEGACY_LOCAL_OVERRIDE_FILE="$SCRIPT_DIR/docker-compose.local.yml"
 # Human-facing command prefix. Recovery instructions must reproduce the SAME
 # file set _compose() uses; the reliable way to do that in a copy-pasteable
 # one-liner is a bare `docker compose` scoped to this directory, letting the
-# auto-load convention above do the work.
-_compose_hint() { printf 'cd %s && docker compose %s' "$SCRIPT_DIR" "$*"; }
+# auto-load convention above do the work. Paths in a printed command go through
+# %q, so one with a space (a Windows user name, say) can still be pasted.
+_UM_SCRIPT_DIR_Q=$(printf '%q' "$SCRIPT_DIR")
+_compose_hint() { printf 'cd %s && docker compose %s' "$_UM_SCRIPT_DIR_Q" "$*"; }
 
 # v1.0 W1.4 — image-mode detection. Default is pull-from-GHCR (fast, ~20s
 # first-run). Set UM_BUILD_LOCAL=1 in the calling environment to build
@@ -311,10 +313,10 @@ _um_check_env_in_image() {
 	# The one-off container bind-mounts the history dir like the server does; a
 	# source dir Docker creates is root-owned (see _um_ensure_history_dir).
 	_um_ensure_history_dir
-	# </dev/null: compose run reads stdin, and from a piped deploy script
-	# (ssh host 'bash -s' < deploy.sh) that is the rest of the script.
+	# compose run reads stdin. Both callers have closed theirs by now: from a piped
+	# deploy script (ssh host 'bash -s' < deploy.sh) it is the rest of the script.
 	_UM_ENVCHECK_OUT=$(_compose run --rm --no-deps -T --entrypoint sh memory-server \
-		-c '[ -f bin/check-env.mjs ] || exit 3; exec node bin/check-env.mjs' 2>&1 </dev/null) || _rc=$?
+		-c '[ -f bin/check-env.mjs ] || exit 3; exec node bin/check-env.mjs' 2>&1) || _rc=$?
 	if [ "$_rc" -eq 1 ] && ! printf '%s\n' "$_UM_ENVCHECK_OUT" | grep -q '^\[check-env\] FATAL'; then
 		_rc=2
 	fi
@@ -850,7 +852,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 		echo "" >&2
 		if [ "${_UPG_SWAPPED:-0}" = "1" ]; then
 			printf '\033[1;31m[upgrade]\033[0m %s\n' "Interrupted AFTER the swap started — the stack may be running the new, unverified image." >&2
-			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Roll back:  cd $SCRIPT_DIR && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d" >&2
+			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Roll back:  cd $_UM_SCRIPT_DIR_Q && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d" >&2
 			printf '\033[1;31m[upgrade]\033[0m %s\n' "  Or verify:  curl $_UPG_HEALTH" >&2
 		else
 			printf '\033[1;32m[upgrade]\033[0m %s\n' "Interrupted before the swap — your running server is untouched." >&2
@@ -993,13 +995,14 @@ if [ "${1:-}" = "--upgrade" ]; then
 		export UM_IMAGE="$_UPG_ROLLBACK_REF"
 		_UPG_RB_RC=0
 		_compose up -d 2>&1 | sed 's/^/[compose] /' || _UPG_RB_RC=$?
+		# A failed compose up says nothing about what is running: it can stop before
+		# it touches the container, leaving the old one serving. It started nothing
+		# to wait for, so one probe answers that.
+		_UPG_RB_ATTEMPTS="$_UM_POLL_ATTEMPTS"
+		[ "$_UPG_RB_RC" -eq 0 ] || _UPG_RB_ATTEMPTS=1
 		_UPG_RB_POLL_RC=0
-		if [ "$_UPG_RB_RC" -eq 0 ]; then
-			_um_poll_health "$_UPG_HEALTH" "$_UM_POLL_ATTEMPTS" || _UPG_RB_POLL_RC=$?
-		else
-			_UPG_RB_POLL_RC=1
-		fi
-		if [ "$_UPG_RB_POLL_RC" -eq 0 ]; then
+		_um_poll_health "$_UPG_HEALTH" "$_UPG_RB_ATTEMPTS" || _UPG_RB_POLL_RC=$?
+		if [ "$_UPG_RB_RC" -eq 0 ] && [ "$_UPG_RB_POLL_RC" -eq 0 ]; then
 			echo ""
 			_uok "ROLLBACK SUCCEEDED — ${_UPG_ROLLBACK_TAG:-the previous image} is running and healthy at $_UPG_HEALTH."
 			_uwarn "The upgrade to $_UPG_IMAGE did NOT take. Check the logs above before retrying."
@@ -1011,12 +1014,17 @@ if [ "${1:-}" = "--upgrade" ]; then
 			_uwarn "  add UM_IMAGE=$_UPG_ROLLBACK_REF (or a known-good UM_VERSION) to $ENV_FILE"
 			exit 1
 		fi
-		echo ""
-		_ufail "ROLLBACK FAILED — the server is DOWN and needs a hand.
-  Recover manually:
-    cd $SCRIPT_DIR && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d
+		_UPG_RB_RECOVER="  Recover manually:
+    cd $_UM_SCRIPT_DIR_Q && UM_IMAGE=$_UPG_ROLLBACK_REF docker compose up -d
     curl $_UPG_HEALTH
   Then check: $(_compose_hint 'logs memory-server')"
+		echo ""
+		if [ "$_UPG_RB_POLL_RC" -eq 0 ]; then
+			_ufail "ROLLBACK FAILED — compose up -d failed (exit $_UPG_RB_RC), but the server still answers at $_UPG_HEALTH. Which image it is running is not confirmed.
+$_UPG_RB_RECOVER"
+		fi
+		_ufail "ROLLBACK FAILED — the server is DOWN and needs a hand.
+$_UPG_RB_RECOVER"
 	fi
 
 	# ── Post-success: refresh the um CLI ─────────────────────────────────────
@@ -1055,7 +1063,7 @@ if [ "${1:-}" = "--upgrade" ]; then
 			_uok "um CLI refreshed${_UPG_CLI_VER:+ to $_UPG_CLI_VER}."
 		else
 			_uwarn "CLI refresh FAILED. The server upgrade is fine and still healthy — only the CLI is stale."
-			_uwarn "  Re-run it yourself:  bash $_UPG_CLI_INSTALLER --no-path"
+			_uwarn "  Re-run it yourself:  bash $(printf '%q' "$_UPG_CLI_INSTALLER") --no-path"
 		fi
 	fi
 
@@ -1083,7 +1091,7 @@ EOF
 ║
 EOF
 	printf '║ To revert to the previous image:\n'
-	printf '║   cd %s && UM_IMAGE=%s docker compose up -d\n' "$SCRIPT_DIR" "$_UPG_ROLLBACK_REF"
+	printf '║   cd %s && UM_IMAGE=%s docker compose up -d\n' "$_UM_SCRIPT_DIR_Q" "$_UPG_ROLLBACK_REF"
 	cat <<'EOF'
 ╚═════════════════════════════════════════════════════════════════════╝
 EOF
@@ -1185,10 +1193,8 @@ fi
 # running remote clients (Claude.ai tunnel, Custom GPT, Codex plugin on
 # different boxes) don't have their cached token silently invalidated by a
 # fresh install. Only generate a new 64-char hex token on true first run
-# (no pre-existing value in env OR in .env). Mirror idempotently to
-# ~/.um/auth-token with mode 600 — best-effort; chmod is a no-op on Windows
-# NTFS, where ACL inheritance from ~/.um (mode 700) provides equivalent
-# protection.
+# (no pre-existing value in env OR in .env). It is mirrored to ~/.um/auth-token
+# after the last prompt (see the note there).
 #
 # This block is placed BEFORE the prompt/collection loop so that the
 # resulting UM_AUTH_TOKEN is already in the environment by the time the
@@ -1234,16 +1240,6 @@ if [ -z "${UM_AUTH_TOKEN:-}" ]; then
 	info "Generated new UM_AUTH_TOKEN."
 fi
 export UM_AUTH_TOKEN
-
-# Mirror to ~/.um/auth-token (chmod 600). Parent dir gets 700. Best-effort
-# on Windows NTFS where chmod is a no-op — equivalent protection comes from
-# ACL inheritance off ~/.um.
-if [ -n "${HOME:-}" ]; then
-	mkdir -p "$HOME/.um"
-	chmod 700 "$HOME/.um" 2>/dev/null || true
-	printf '%s' "$UM_AUTH_TOKEN" > "$HOME/.um/auth-token"
-	chmod 600 "$HOME/.um/auth-token" 2>/dev/null || true
-fi
 
 # ─── Collect required values ─────────────────────────────────────────────────
 # _um_read [-s] [-w] <var> <way out>: every prompt reads its answer into <var>
@@ -1507,6 +1503,7 @@ else
 			_um_read -w -s _key_to_validate "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
 			echo >&2
 			[ -z "$_key_to_validate" ] && fail "Empty key — aborting."
+			[[ "$_key_to_validate" =~ [[:space:]] ]] && fail "UM_OPENAI_API_KEY contains whitespace — refusing to write to .env."
 		done
 		UM_OPENAI_API_KEY="$_key_to_validate"
 		export UM_OPENAI_API_KEY
@@ -1874,7 +1871,7 @@ _append_to_profile() {
 		_strip_marker_block "$profile"
 		_write_marker_block "$profile" "$summarizer"
 		ok "Managed block refreshed in $profile."
-		info "Reload your shell or run: source $profile"
+		info "Reload your shell or run: source $(printf '%q' "$profile")"
 		return
 	fi
 
@@ -1891,12 +1888,25 @@ _append_to_profile() {
 	_write_marker_block "$profile" "$summarizer"
 
 	ok "universal-memory settings (UM_SUMMARIZER, UM_SERVER_URL, um on PATH) added to $profile"
-	info "Reload your shell or run: source $profile"
+	info "Reload your shell or run: source $(printf '%q' "$profile")"
 }
 
 _SHELL_PROFILE=$(_detect_profile)
 info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
 _append_to_profile "$_SHELL_PROFILE" "$_um_summarizer_default"
+
+# Mirror to ~/.um/auth-token (chmod 600). Parent dir gets 700. Best-effort
+# on Windows NTFS where chmod is a no-op — equivalent protection comes from
+# ACL inheritance off ~/.um. Written only now that the last prompt has been
+# answered: every login shell exports this file, and it may hold a token this
+# run did not make (installer/install.sh --remote writes one for a remote server),
+# so a run that stops at a prompt must leave it as it found it.
+if [ -n "${HOME:-}" ]; then
+	mkdir -p "$HOME/.um"
+	chmod 700 "$HOME/.um" 2>/dev/null || true
+	printf '%s' "$UM_AUTH_TOKEN" > "$HOME/.um/auth-token"
+	chmod 600 "$HOME/.um/auth-token" 2>/dev/null || true
+fi
 
 # ─── #320: non-loopback Qdrant publish warning ──────────────────────────────
 # Runs after .env is written so the check sees exactly what compose will read
@@ -1908,6 +1918,11 @@ if [ -n "$_qbad" ]; then
 fi
 
 # ─── Start stack ─────────────────────────────────────────────────────────────
+# The last prompt is behind us, so nothing from here on reads the caller's stdin.
+# Run through `ssh host 'bash -s'`, it is the rest of the deploy script, and
+# compose reads it whenever it has a question (--upgrade's note has the measured
+# case). On a terminal too, compose's question now gets no answer, as under --upgrade.
+exec </dev/null
 if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then
 	info "Skipping docker stack start (--skip-docker set)."
 else
@@ -2001,7 +2016,7 @@ else
 fi
 _profile_hint=""
 if [ -n "$_SHELL_PROFILE" ]; then
-	_profile_hint="  Shell profile updated: source $_SHELL_PROFILE (or open a new terminal)"
+	_profile_hint="  Shell profile updated: source $(printf '%q' "$_SHELL_PROFILE") (or open a new terminal)"
 else
 	_profile_hint="  Add to your shell profile:  export UM_SUMMARIZER='$_um_summarizer_default'"
 fi
@@ -2015,8 +2030,8 @@ cat <<EOF
 ║   1. Verify the install:    bash server/install.sh --verify
 $_plugin_step
 ║   3. Upgrade later:         bash server/install.sh --upgrade
-║   4. Stop the stack:        cd $SCRIPT_DIR && docker compose down
-║   5. Restart later:         cd $SCRIPT_DIR && docker compose up -d
+║   4. Stop the stack:        cd $_UM_SCRIPT_DIR_Q && docker compose down
+║   5. Restart later:         cd $_UM_SCRIPT_DIR_Q && docker compose up -d
 ║
 ║ Data persists at: server/data/qdrant/
 ║ Edit configuration: server/.env

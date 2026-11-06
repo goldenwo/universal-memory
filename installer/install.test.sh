@@ -836,6 +836,58 @@ while IFS='|' read -r _key _src; do
   if grep -qF -- "$_key" "$REPO_ROOT/$_src"; then pass "T-README-KEYS: '$_key' is printed by $_src"; else fail "T-README-KEYS: '$_key' not in $_src"; fi
 done <<< "$_readme_keys"
 
+# ─── T-PREPUSH-STDIN: the pre-push gate hands its suites none of git's ref lines ─
+# git writes one line per pushed ref to the hook's stdin. The hook's loop stops
+# at the first ref that fires the gate, and whatever suite read stdin next got
+# the rest. Every step here is a stub that records its stdin. So are the tools it
+# calls (docker, curl and the linter), first on PATH, so no real stack is touched.
+echo ""
+echo "=== T-PREPUSH-STDIN: the gate's steps read none of git's leftover ref lines ==="
+TPP=$(mktemp -d)
+mkdir -p "$TPP/bin" "$TPP/repo/scripts/githooks" "$TPP/repo/server/test" "$TPP/repo/installer"
+cp "$REPO_ROOT/scripts/githooks/pre-push" "$TPP/repo/scripts/githooks/pre-push"
+for _step in server/test/smoke.sh server/install.test.sh installer/install-cli.test.sh installer/install.test.sh; do
+  printf '#!/bin/bash\necho ran >> "%s/steps-ran"\ncat >> "%s/steps-stdin"\n' "$TPP" "$TPP" > "$TPP/repo/$_step"
+done
+for _tool in docker curl shellcheck; do
+  printf '#!/bin/bash\necho ran >> "%s/tools-ran"\ncat >> "%s/steps-stdin"\n' "$TPP" "$TPP" > "$TPP/bin/$_tool"
+  chmod +x "$TPP/bin/$_tool"
+done
+git -C "$TPP/repo" init -q
+_tpp_commit() {
+  git -C "$TPP/repo" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+    commit -q --allow-empty -m "$1"
+}
+_tpp_commit "chore: base"
+_tpp_base=$(git -C "$TPP/repo" rev-parse HEAD)
+_tpp_commit "feat(server): integration (B.14)"
+_tpp_head=$(git -C "$TPP/repo" rev-parse HEAD)
+: > "$TPP/steps-stdin"
+TPP_EXIT=0
+(cd "$TPP/repo" && PATH="$TPP/bin:$PATH" bash scripts/githooks/pre-push origin url > "$TPP/hook.out" 2>&1) <<REFS || TPP_EXIT=$?
+refs/heads/v1 $_tpp_head refs/heads/v1 $_tpp_base
+refs/heads/other $_tpp_head refs/heads/other $_tpp_base
+REFS
+if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-STDIN: the gate passes"; else fail "T-PREPUSH-STDIN: the gate exited $TPP_EXIT: $(cat "$TPP/hook.out")"; fi
+if [ "$(wc -l < "$TPP/steps-ran" | tr -d ' ')" = "4" ]; then pass "T-PREPUSH-STDIN: all four suites ran"; else fail "T-PREPUSH-STDIN: suites run: $(cat "$TPP/steps-ran" 2>/dev/null)"; fi
+if [ -s "$TPP/steps-stdin" ]; then fail "T-PREPUSH-STDIN: a step read git's ref lines: $(cat "$TPP/steps-stdin")"; else pass "T-PREPUSH-STDIN: no step read git's ref lines"; fi
+rm -rf "$TPP"
+
+# ─── T-YES-REFUSAL: a piped install is told a way forward it can take ────────
+# The refusal offered "run interactively without --yes", which a piped install
+# cannot do: its stdin is the script, and every prompt would fail.
+echo ""
+echo "=== T-YES-REFUSAL: --yes with no key, from curl | bash ==="
+TYR=$(mktemp -d)
+make_stubs "$TYR/bin"
+TYR_EXIT=0
+TYR_OUT=$(env -i PATH="$TYR/bin:/usr/bin:/bin" HOME="$TYR" "$REAL_BASH" -s -- --server --yes < "$INSTALLER" 2>&1) || TYR_EXIT=$?
+if [ "$TYR_EXIT" -ne 0 ]; then pass "T-YES-REFUSAL: refuses"; else fail "T-YES-REFUSAL: exited 0"; fi
+for _want in "--yes mode requires API key(s)" "set UM_OPENAI_API_KEY" "A piped install" "no terminal to ask on" "without --yes"; do
+  if [[ "$TYR_OUT" == *"$_want"* ]]; then pass "T-YES-REFUSAL: says '$_want'"; else fail "T-YES-REFUSAL: does not say '$_want': $TYR_OUT"; fi
+done
+rm -rf "$TYR"
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

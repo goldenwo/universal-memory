@@ -59,6 +59,11 @@ assert_file_exists() {
   if [ -e "$file" ]; then pass "$name"; else fail_test "$name" "file not found: $file"; fi
 }
 
+assert_file_absent() {
+  local name="$1" file="$2"
+  if [ -e "$file" ]; then fail_test "$name" "file exists: $file"; else pass "$name"; fi
+}
+
 assert_exit_zero() {
   local name="$1" code="$2"
   if [ "$code" -eq 0 ]; then pass "$name"; else fail_test "$name" "exit code $code (expected 0)"; fi
@@ -938,6 +943,8 @@ fi
 #   FAKE_OLD_ID        image ID reported for the running container
 #   FAKE_OLD_TAG       image tag reported for the running container
 #   FAKE_READ_STDIN    1 ⇒ every call reads its stdin, as compose's prompts do
+#   FAKE_UP_RC         non-zero ⇒ every `compose up -d` fails
+#   FAKE_UP_SLEEP      seconds every `compose up -d` takes
 make_fake_docker_upgrade() {
   local dest="$1"
   mkdir -p "$dest"
@@ -953,6 +960,11 @@ case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
 esac
+if [[ "$args" == *" up -d"* ]] && [ -n "${FAKE_UP_SLEEP:-}" ]; then sleep "$FAKE_UP_SLEEP"; fi
+if [[ "$args" == *" up -d"* ]] && [ "${FAKE_UP_RC:-0}" != "0" ]; then
+  echo "Error response from daemon: driver failed programming external connectivity" >&2
+  exit "$FAKE_UP_RC"
+fi
 # Pre-start config check (#400): `compose ... run --rm --no-deps -T ... memory-server ...`.
 # FAKE_ENVCHECK_RC=1 models the target image refusing the configuration.
 if [[ "$args" == compose*" run "*"memory-server"* ]]; then
@@ -1408,6 +1420,49 @@ assert_exit_zero "T29c: still runs" "$T29C_EXIT"
 assert_contains "T29c: warns the legacy file is inert" "$T29C_OUT" "NO LONGER APPLIED"
 assert_contains "T29c: gives the rename command" "$T29C_OUT" "docker-compose.override.yml"
 rm -f "$T29C/server/docker-compose.local.yml"
+
+# ─── T29d: a rollback whose compose up failed is checked before it says DOWN ─
+# compose up can fail before it touches the container (a daemon error, a port
+# conflict), so the old one is still serving. The rollback's compose up then fails
+# the same way, and the run told its operator the server was DOWN without asking.
+echo ""
+echo "=== T29d: compose up fails during the rollback, and the server still answers ==="
+T29D="$TMPROOT/t29d"
+mkdir -p "$T29D/server"
+make_fakebin "$T29D/bin" 200
+make_fake_docker_upgrade "$T29D/bin"
+T29D_SH=$(make_isolated_server "$T29D/server")
+T29D_EXIT=0
+T29D_OUT=$(run_upgrade "$T29D/bin" "$T29D_SH" "$T29D/docker.log" FAKE_UP_RC=1 -- --upgrade) || T29D_EXIT=$?
+assert_exit_nonzero "T29d: exits non-zero" "$T29D_EXIT"
+assert_eq "T29d: both the swap and the rollback tried compose up" "$(grep -c -- ' up -d' "$T29D/docker.log")" "2"
+assert_contains "T29d: says the rollback's compose up failed" "$T29D_OUT" "ROLLBACK FAILED — compose up -d failed (exit 1)"
+assert_contains "T29d: says the server still answers" "$T29D_OUT" "still answers at http://localhost:6335/health"
+assert_not_contains "T29d: does not call the server DOWN" "$T29D_OUT" "DOWN"
+assert_not_contains "T29d: does not claim the rollback worked" "$T29D_OUT" "ROLLBACK SUCCEEDED"
+assert_contains "T29d: prints the recovery command" "$T29D_OUT" "UM_IMAGE=um-rollback:previous docker compose up -d"
+
+echo ""
+echo "=== T29e: compose up fails during the rollback, and nothing answers ==="
+T29E="$TMPROOT/t29e"
+mkdir -p "$T29E/server"
+make_fakebin "$T29E/bin" 200
+make_fake_docker_upgrade "$T29E/bin"
+cat > "$T29E/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+if [[ "$*" == *"/health"* ]]; then echo probe >> "$(dirname "$0")/health-probes"; exit 7; fi
+exit 0
+FAKE
+chmod +x "$T29E/bin/curl"
+T29E_SH=$(make_isolated_server "$T29E/server")
+T29E_EXIT=0
+# A ceiling of 5: a failed compose up starts nothing, so there is nothing to wait
+# for, and this outage should not spend its first minutes on a timer.
+T29E_OUT=$(run_upgrade "$T29E/bin" "$T29E_SH" "$T29E/docker.log" FAKE_UP_RC=1 _UM_HEALTH_POLL_ATTEMPTS=5 -- --upgrade) || T29E_EXIT=$?
+assert_exit_nonzero "T29e: exits non-zero" "$T29E_EXIT"
+assert_contains "T29e: says the server is DOWN" "$T29E_OUT" "ROLLBACK FAILED — the server is DOWN"
+assert_eq "T29e: asked the server once before saying so" "$(wc -l < "$T29E/bin/health-probes" 2>/dev/null | tr -d ' ')" "1"
+assert_contains "T29e: prints the recovery command" "$T29E_OUT" "UM_IMAGE=um-rollback:previous docker compose up -d"
 
 # ─── T30: health URL comes from compose, not from MEM0_MCP_PORT ──────────────
 # A host override can REPLACE the published ports, so a URL derived from
@@ -2385,6 +2440,8 @@ done
 #                       itself failed
 #   FAKE_RESTART_COUNT  RestartCount of the memory-server container
 #   FAKE_RUN_STDIN      file the check appends its stdin to (compose run reads it)
+#   FAKE_UP_STDIN       file `up -d`, and every docker call after it, appends its
+#                       stdin to (compose reads it when it has a question)
 make_fake_docker_envcheck() {
   local dest="$1"
   mkdir -p "$dest"
@@ -2392,6 +2449,9 @@ make_fake_docker_envcheck() {
 #!/usr/bin/env bash
 args="$*"
 [ -n "${FAKE_DOCKER_LOG:-}" ] && printf 'ARGS=%s\n' "$args" >> "$FAKE_DOCKER_LOG"
+if [ -n "${FAKE_UP_STDIN:-}" ] && { [[ "$args" == *" up -d"* ]] || [ -e "$FAKE_UP_STDIN" ]; }; then
+  cat >> "$FAKE_UP_STDIN"
+fi
 case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
@@ -2549,8 +2609,7 @@ assert_eq "TCE7: the history dir existed when the check ran" "$(cat "$TCE7/run-s
 # A deploy script piped to a shell (ssh host 'bash -s' < deploy.sh) hands
 # install.sh that script as stdin. compose run reads stdin, so the check took
 # the rest of the deploy script (#403). --upgrade closes its stdin outright
-# (TCE9); an install keeps stdin for its prompts, so there the check's own
-# redirect is what holds.
+# (TCE9); an install closes it once its prompts are over (TCE10, TCE11).
 echo ""
 echo "=== TCE8: an install's config check reads none of the caller's stdin ==="
 T="$TMPROOT/tce8"; _ce_setup "$T"
@@ -2580,6 +2639,44 @@ TCE9_EXIT=0
 } <<< 'echo LEFT-FOR-THE-CALLER'
 assert_exit_zero "TCE9: --upgrade exits 0" "$TCE9_EXIT"
 assert_eq "TCE9: the caller's stdin is left for the caller" "$(cat "$TCE9/left")" "echo LEFT-FOR-THE-CALLER"
+
+# The install path has the same door once its prompts are over: a deploy script
+# running `bash server/install.sh --yes` through `ssh host 'bash -s'` handed
+# compose up -d the rest of itself.
+echo ""
+echo "=== TCE10: --yes leaves the caller's stdin unread ==="
+T="$TMPROOT/tce10"; _ce_setup "$T"
+TCE10_EXIT=0
+{
+  _ce_install "$T" FAKE_UP_STDIN="$T/up-stdin" > "$T/install.out" || TCE10_EXIT=$?
+  cat > "$T/left"
+} <<< 'echo LEFT-FOR-THE-CALLER'
+assert_exit_zero "TCE10: install exits 0" "$TCE10_EXIT"
+assert_file_exists "TCE10: compose up -d ran and read its stdin" "$T/up-stdin"
+assert_eq "TCE10: compose up -d got none of the caller's stdin" "$(cat "$T/up-stdin" 2>/dev/null)" ""
+assert_eq "TCE10: the caller's stdin is left for the caller" "$(cat "$T/left")" "echo LEFT-FOR-THE-CALLER"
+
+# Without --yes the prompts still read stdin, up to the last one (the shell
+# profile); only what follows them is the caller's.
+echo ""
+echo "=== TCE11: the prompts read their answers, and the rest stays unread ==="
+T="$TMPROOT/tce11"; _ce_setup "$T"
+TCE11_EXIT=0
+{
+  run_install "$T/bin" "$T/server/install.sh" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$T/vault" CLAUDE_PLUGINS_DIR="$T/plugins" UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash \
+    HOME="$T/home" FAKE_UP_STDIN="$T/up-stdin" > "$T/install.out" || TCE11_EXIT=$?
+  cat > "$T/left"
+} <<'ANSWERS'
+myns
+n
+echo LEFT-FOR-THE-CALLER
+ANSWERS
+assert_exit_zero "TCE11: install exits 0" "$TCE11_EXIT"
+assert_eq "TCE11: the first prompt read its answer" "$(grep -E '^MEM0_USER_ID=' "$T/server/.env")" "MEM0_USER_ID=myns"
+assert_contains "TCE11: the last prompt read its answer" "$(cat "$T/install.out")" "Shell profile update skipped"
+assert_eq "TCE11: compose up -d got none of the caller's stdin" "$(cat "$T/up-stdin" 2>/dev/null)" ""
+assert_eq "TCE11: the caller's stdin is left for the caller" "$(cat "$T/left")" "echo LEFT-FOR-THE-CALLER"
 
 # ─── TEOF: a prompt with nothing on stdin says what to do instead ────────────
 # `curl ... | bash` with no flags installs everything without --yes, so
@@ -2627,6 +2724,9 @@ T="$TMPROOT/teof-key"; _teof_setup "$T" 200
 _teof_check "hidden key prompt" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
 assert_not_contains "TEOF hidden key prompt: a first install has no .env to warn about" \
   "$TEOF_OUT" "$TEOF_ENV_WARNING"
+# ~/.um/auth-token mirrors the token in .env. A run that stops at a prompt has
+# not installed anything, and the shell block reads this file at every login.
+assert_file_absent "TEOF hidden key prompt: writes no ~/.um/auth-token" "$T/home/.um/auth-token"
 
 # An existing install's namespace, port and vault went back to default, 6335
 # and ~/.um/vault when its operator took the way out as given.
@@ -2673,6 +2773,23 @@ _teof_check "shell profile" "Re-run with --yes to add the settings to $T/home/.b
 # started no stack, so there is nothing for --upgrade to upgrade.
 assert_contains "TEOF shell profile: warns about the .env this run wrote" "$TEOF_OUT" "$TEOF_ENV_WARNING"
 assert_not_contains "TEOF shell profile: a first install is not sent to --upgrade" "$TEOF_OUT" "--upgrade"
+# This is the last prompt, and .env holds the token by now. The file still waits:
+# the run has not got past its prompts, and a re-run writes it from .env.
+assert_file_absent "TEOF shell profile: writes no ~/.um/auth-token" "$T/home/.um/auth-token"
+TEOF_RC=0
+_teof_run "$T" UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1 </dev/null > "$T/rerun.out" || TEOF_RC=$?
+assert_exit_zero "TEOF shell profile: a re-run finishes the install" "$TEOF_RC"
+TEOF_TOKEN=$(grep -E '^UM_AUTH_TOKEN=' "$T/server/.env" | cut -d= -f2-)
+if [ -n "$TEOF_TOKEN" ]; then pass "TEOF shell profile: .env holds a token"; else fail_test "TEOF shell profile: .env holds a token" "none"; fi
+assert_eq "TEOF shell profile: the re-run writes ~/.um/auth-token from .env" \
+  "$(cat "$T/home/.um/auth-token" 2>/dev/null)" "$TEOF_TOKEN"
+
+# A prompt it stops at leaves an existing token file as it was.
+T="$TMPROOT/teof-token-kept"; _teof_setup "$T" 200
+mkdir -p "$T/home/.um"; printf 'tok-before' > "$T/home/.um/auth-token"
+_teof_check "existing token file" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_eq "TEOF existing token file: a stop at a prompt leaves it alone" "$(cat "$T/home/.um/auth-token")" "tok-before"
 
 T="$TMPROOT/teof-last"; _teof_setup "$T" 200
 printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \
@@ -2680,14 +2797,12 @@ printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0
 assert_eq "TEOF: a last answer with no newline counts" \
   "$(grep -E '^MEM0_USER_ID=' "$T/server/.env" 2>/dev/null)" "MEM0_USER_ID=myns"
 
-# A stdin that cannot be read at all (nohup from a terminal reopens fd 0
-# write-only) fails read without assigning: the rejected key stayed in place and
-# the 401 loop validated it again forever, and an answer with no earlier value
-# died on `unbound variable`. This curl rejects the first key and accepts any
-# after it, so a regression ends instead of hanging.
-T="$TMPROOT/teof-ebadf-401"; _teof_setup "$T" 401
-mv "$T/bin/curl" "$T/bin/curl-401"
-cat > "$T/bin/curl" <<'FAKE'
+# _teof_curl_rejects_first <dir>: this curl rejects the first key and accepts any
+# after it, so a regression in the 401 loop ends instead of hanging. Each probe
+# is a line in <dir>/bin/openai-probes.
+_teof_curl_rejects_first() {
+  mv "$1/bin/curl" "$1/bin/curl-401"
+  cat > "$1/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
 d=$(dirname "$0")
 if [[ "$*" == *"openai.com"* ]]; then
@@ -2699,7 +2814,14 @@ if [[ "$*" == *"openai.com"* ]]; then
 fi
 exec "$d/curl-401" "$@"
 FAKE
-chmod +x "$T/bin/curl"
+  chmod +x "$1/bin/curl"
+}
+
+# A stdin that cannot be read at all (nohup from a terminal reopens fd 0
+# write-only) fails read without assigning: the rejected key stayed in place and
+# the 401 loop validated it again forever, and an answer with no earlier value
+# died on `unbound variable`.
+T="$TMPROOT/teof-ebadf-401"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
 _teof_check --unreadable "unreadable stdin at the rejected key" \
   "Export a valid UM_OPENAI_API_KEY and re-run with --yes." "$T" \
   OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
@@ -2721,6 +2843,19 @@ TEOF_OUT=$(printf 'sk-testkey12345 \n' | _teof_run "$T" OPENAI_API_KEY= MEM0_USE
 assert_exit_nonzero "TEOF key with a trailing space: exits non-zero" "$TEOF_RC"
 assert_contains "TEOF key with a trailing space: refused, not trimmed" "$TEOF_OUT" \
   "OPENAI_API_KEY contains whitespace"
+
+# The same goes for a key re-entered after a 401: the whitespace check runs before
+# the probe, so the new key missed it and went into .env.
+T="$TMPROOT/teof-ws-401"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+TEOF_RC=0
+TEOF_OUT=$(printf 'sk-testkey12345 \n' | _teof_run "$T" OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault") || TEOF_RC=$?
+assert_exit_nonzero "TEOF re-entered key with a trailing space: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF re-entered key with a trailing space: refused, not trimmed" "$TEOF_OUT" \
+  "UM_OPENAI_API_KEY contains whitespace"
+assert_eq "TEOF re-entered key with a trailing space: not sent to OpenAI" \
+  "$(wc -l < "$T/bin/openai-probes" | tr -d ' ')" "1"
+assert_file_absent "TEOF re-entered key with a trailing space: .env not written" "$T/server/.env"
 
 # What the existing-install warning describes: a --yes re-run over a .env keeps
 # its token and takes the namespace, port, vault and key from the environment
@@ -2844,6 +2979,210 @@ assert_eq "TEOF signal during --verify: exits 130" "$TEOF_RC" "130"
 assert_eq "TEOF signal during --verify: leaves no smoke dir" "$(_teof_made_left "$T")" ""
 assert_eq "TEOF signal during --verify: leaves no smoke capture in the vault" \
   "$(ls -A "$T/vault/captures" 2>/dev/null)" ""
+
+# ─── TQ: a recovery command prints its paths so a shell can take them back ───
+# A checkout or home whose path has a space (a Windows user name, say) printed
+# `cd /c/Users/First Last/server && docker compose up -d`, which does not run.
+# Each case runs the printed command as someone pasting it would, with docker,
+# source and bash as functions here: they do nothing, and no PATH can get round
+# a function, so no real stack is reached.
+echo ""
+echo "=== TQ: recovery commands still run when the path has a space ==="
+# _tq_paste <case> <the line has> <the command starts with> <text> <want>: <want>
+# is what the command reached: the directory docker ran in, or the path that
+# source or bash was given.
+_tq_paste() {
+  local name="$1" has="$2" from="$3" text="$4" want="$5" line got
+  line=$(printf '%s\n' "$text" | grep -F -- "$has" | head -1 || true)
+  got=$(
+    docker() { printf '%s' "$PWD"; }
+    source() { printf '%s' "$1"; }
+    bash() { printf '%s' "$1"; }
+    eval "$from${line#*"$from"}" 2>/dev/null
+  ) || true
+  assert_eq "TQ $name: reaches $want" "$got" "$want"
+}
+# The vault's path may not hold whitespace, so it stays out of the spaced dir.
+TQ_VAULT="$TMPROOT/tq-vault"
+
+T="$TMPROOT/tq spaced"; _ce_setup "$T"
+TQ_EXIT=0
+TQ_OUT=$(_ce_install "$T" UM_VAULT_DIR="$TQ_VAULT") || TQ_EXIT=$?
+assert_exit_zero "TQ install: exits 0" "$TQ_EXIT"
+_tq_paste "banner's stop" "Stop the stack:" "cd " "$TQ_OUT" "$T/server"
+_tq_paste "banner's restart" "Restart later:" "cd " "$TQ_OUT" "$T/server"
+_tq_paste "first profile write" "Reload your shell" "source " "$TQ_OUT" "$T/home/.bashrc"
+assert_contains "TQ banner's profile line: the path is quoted" "$TQ_OUT" \
+  "Shell profile updated: source $TMPROOT/tq\\ spaced/home/.bashrc (or open"
+TQ_EXIT=0
+TQ_OUT=$(_ce_install "$T" UM_VAULT_DIR="$TQ_VAULT") || TQ_EXIT=$?
+assert_exit_zero "TQ re-run: exits 0" "$TQ_EXIT"
+_tq_paste "profile rewrite" "Reload your shell" "source " "$TQ_OUT" "$T/home/.bashrc"
+
+T="$TMPROOT/tq spaced crash"; _ce_setup "$T"
+cat > "$T/bin/curl" <<'FAKE'
+#!/usr/bin/env bash
+[[ "$*" == *"/health"* ]] && exit 7
+exit 0
+FAKE
+chmod +x "$T/bin/curl"
+TQ_OUT=$(_ce_install "$T" UM_VAULT_DIR="$TQ_VAULT" FAKE_RESTART_COUNT=5 _UM_HEALTH_POLL_ATTEMPTS=1) || true
+_tq_paste "install's logs hint" "Check logs with:" "cd " "$TQ_OUT" "$T/server"
+
+# _tq_upgrade_setup <dir>: a --upgrade tree; TQ_SH is its install.sh.
+_tq_upgrade_setup() {
+  mkdir -p "$1/server" "$1/home"
+  make_fakebin "$1/bin" 200
+  make_fake_docker_upgrade "$1/bin"
+  TQ_SH=$(make_isolated_server "$1/server")
+}
+T="$TMPROOT/tq spaced upgrade"; _tq_upgrade_setup "$T"
+TQ_EXIT=0
+TQ_OUT=$(run_upgrade "$T/bin" "$TQ_SH" "$T/docker.log" -- --upgrade) || TQ_EXIT=$?
+assert_exit_zero "TQ --upgrade: exits 0" "$TQ_EXIT"
+_tq_paste "--upgrade's revert" "UM_IMAGE=um-rollback:previous docker compose up -d" "cd " "$TQ_OUT" "$T/server"
+
+T="$TMPROOT/tq spaced rollback"; _tq_upgrade_setup "$T"
+TQ_OUT=$(run_upgrade "$T/bin" "$TQ_SH" "$T/docker.log" FAKE_UP_RC=1 -- --upgrade) || true
+_tq_paste "failed rollback's recovery" "UM_IMAGE=um-rollback:previous docker compose up -d" "cd " "$TQ_OUT" "$T/server"
+_tq_paste "failed rollback's logs hint" "Then check:" "cd " "$TQ_OUT" "$T/server"
+
+T="$TMPROOT/tq spaced signal"; _tq_upgrade_setup "$T"
+_teof_signal "$T" "$T/docker.log" " up -d" FAKE_DOCKER_LOG="$T/docker.log" FAKE_UP_SLEEP=3 MEM0_MCP_PORT=6335 \
+  _UM_HEALTH_POLL_ATTEMPTS=1 -- --upgrade
+assert_eq "TQ signal during the swap: the swap was under way first" "$TEOF_SEEN" "1"
+assert_eq "TQ signal during the swap: exits 130" "$TEOF_RC" "130"
+_tq_paste "signal's roll back" "Roll back:" "cd " "$TEOF_OUT" "$T/server"
+
+T="$TMPROOT/tq spaced cli"; _tq_upgrade_setup "$T"
+mkdir -p "$T/home/.local/share/um/cli" "$T/repo/installer"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$T/repo/installer/install-cli.sh"
+TQ_OUT=$(env -i PATH="$T/bin:/usr/bin:/bin" _UM_REPO_ROOT="$T/repo" HOME="$T/home" FAKE_DOCKER_LOG="$T/docker.log" \
+  _UM_HEALTH_POLL_ATTEMPTS=1 MEM0_MCP_PORT=6335 bash "$TQ_SH" --upgrade 2>&1) || true
+_tq_paste "CLI refresh" "Re-run it yourself:" "bash " "$TQ_OUT" "$T/repo/installer/install-cli.sh"
+
+# ─── TPTY: a hidden prompt hides what is typed, on a real terminal ───────────
+# read -s only does anything on a terminal, and every other case here feeds
+# stdin from a pipe, so nothing noticed if a key prompt lost it. These cases run
+# the install on a pty and type the answers at the prompts: a terminal echoes
+# what is typed, so an answer shows up in what the terminal printed unless the
+# prompt turned echo off.
+# Windows' Python has no pty module; CI's Linux and macOS runners run these, and
+# there a missing module fails the case instead of skipping it.
+echo ""
+echo "=== TPTY: the key prompts hide what is typed on a terminal ==="
+cat > "$TMPROOT/pty-drive.py" <<'PY'
+# pty-drive.py <transcript> <prompt> <answer> [<prompt> <answer>...] -- <command...>
+# Runs <command> on a new terminal, types each <answer> once its <prompt> has been
+# printed, writes all the terminal printed to <transcript>, and exits with the
+# command's status (125 if a prompt never came, 124 if the command hung).
+import os, pty, select, signal, sys, termios, time
+
+args = sys.argv[1:]
+sep = args.index('--')
+transcript, pairs, command = args[0], args[1:sep], args[sep + 1:]
+steps = list(zip(pairs[::2], pairs[1::2]))
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(command[0], command)
+
+
+def echo_on():
+    try:
+        return bool(termios.tcgetattr(fd)[3] & termios.ECHO)
+    except termios.error:
+        return True
+
+
+def settle():
+    # A hidden prompt prints, then turns echo off. Typing in that gap would echo
+    # for a reason that has nothing to do with the prompt, so give it the chance.
+    end = time.time() + 2
+    while echo_on() and time.time() < end:
+        time.sleep(0.05)
+
+
+def save():
+    with open(transcript, 'wb') as out:
+        out.write(seen)
+
+
+seen = b''
+searched = 0
+deadline = time.time() + 120
+while True:
+    if time.time() > deadline:
+        os.kill(pid, signal.SIGKILL)
+        save()
+        sys.exit(124)
+    ready, _, _ = select.select([fd], [], [], 0.2)
+    if ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:  # Linux: EIO once the command's side has closed
+            break
+        if not chunk:
+            break
+        seen += chunk
+    if steps:
+        at = seen.find(steps[0][0].encode(), searched)
+        if at >= 0:
+            searched = at + len(steps[0][0])
+            settle()
+            os.write(fd, steps.pop(0)[1].encode() + b'\n')
+
+_, status = os.waitpid(pid, 0)
+save()
+if steps:
+    sys.stderr.write('prompt never came: %s\n' % steps[0][0])
+    sys.exit(125)
+sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 128 + os.WTERMSIG(status))
+PY
+# _tpty_run <dir>: the install from <dir> on a terminal. This curl rejects the
+# first key, so both hidden prompts come up: the key, then its re-entry. Sets
+# TPTY_RC and TPTY_SEEN (all the terminal printed).
+_tpty_run() {
+  local t="$1"
+  TPTY_RC=0
+  python3 "$TMPROOT/pty-drive.py" "$t/transcript" \
+    "OpenAI API key (input hidden)" "sk-HIDDEN-FIRST" \
+    "Memory namespace" "VISIBLE-NS" \
+    "UM_OPENAI_API_KEY (input hidden)" "sk-HIDDEN-SECOND" \
+    "[Y/n]" "n" \
+    -- env PATH="$t/bin:$PATH" _UM_REPO_ROOT="$REPO_ROOT" OPENAI_API_KEY= UM_OPENAI_API_KEY= MEM0_USER_ID= \
+    MEM0_MCP_PORT=6335 UM_VAULT_DIR="$t/vault" CLAUDE_PLUGINS_DIR="$t/plugins" SHELL=/bin/bash HOME="$t/home" \
+    bash "$t/server/install.sh" </dev/null > "$t/drive.out" 2>&1 || TPTY_RC=$?
+  TPTY_SEEN=$(cat "$t/transcript" 2>/dev/null || true)
+}
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo "  SKIP: TPTY (no pty for Windows' Python; CI's Linux and macOS runners run it)"
+    ;;
+  *)
+    T="$TMPROOT/tpty"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+    _tpty_run "$T"
+    assert_exit_zero "TPTY: the install finishes" "$TPTY_RC"
+    if [ "$TPTY_RC" -ne 0 ]; then cat "$T/drive.out"; printf '%s\n' "$TPTY_SEEN" | tail -20; fi
+    assert_eq "TPTY: the re-entered key reached .env" "$(grep -E '^UM_OPENAI_API_KEY=' "$T/server/.env")" "UM_OPENAI_API_KEY=sk-HIDDEN-SECOND"
+    # Without this the two below could pass on a terminal that echoes nothing.
+    assert_contains "TPTY: a plain prompt's answer shows" "$TPTY_SEEN" "VISIBLE-NS"
+    assert_not_contains "TPTY: the key prompt hides what is typed" "$TPTY_SEEN" "sk-HIDDEN-FIRST"
+    assert_not_contains "TPTY: the 401 re-entry hides what is typed" "$TPTY_SEEN" "sk-HIDDEN-SECOND"
+
+    # The same run with -s taken out of _um_read: the cases above must be able to
+    # fail. If this sed stops matching, this case says so.
+    T="$TMPROOT/tpty-control"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+    sed 's/read -r \${_um_hide:+"\$_um_hide"}/read -r/' "$INSTALL_SH" > "$T/server/install.sh"
+    if cmp -s "$INSTALL_SH" "$T/server/install.sh"; then
+      fail_test "TPTY control: takes -s out of _um_read" "the sed no longer matches install.sh"
+    else
+      _tpty_run "$T"
+      assert_contains "TPTY control: without -s the key shows" "$TPTY_SEEN" "sk-HIDDEN-FIRST"
+      assert_contains "TPTY control: without -s the re-entered key shows" "$TPTY_SEEN" "sk-HIDDEN-SECOND"
+    fi
+    ;;
+esac
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

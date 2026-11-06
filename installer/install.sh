@@ -495,7 +495,7 @@ if [[ $ASSUME_YES -eq 1 && $INSTALL_SERVER -eq 1 ]]; then
     echo "ERROR: --yes mode requires API key(s) for the configured provider(s); none found in env." >&2
     for _msg in "${_missing_keys[@]}"; do echo "  - $_msg" >&2; done
     echo "" >&2
-    echo "Either set the env var(s) above and re-run, or run interactively without --yes." >&2
+    echo "Set the env var(s) above and re-run. To be asked for them instead, run from a clone on a terminal, without --yes: git clone $REPO && bash universal-memory/installer/install.sh. A piped install (curl ... | bash) has no terminal to ask on." >&2
     echo "Since v0.7, keys are provider-prefixed: UM_<PROVIDER>_API_KEY, falling back to <PROVIDER>_API_KEY (google also accepts GEMINI_API_KEY)." >&2
     exit 1
   fi
