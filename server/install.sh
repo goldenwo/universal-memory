@@ -1185,10 +1185,8 @@ fi
 # running remote clients (Claude.ai tunnel, Custom GPT, Codex plugin on
 # different boxes) don't have their cached token silently invalidated by a
 # fresh install. Only generate a new 64-char hex token on true first run
-# (no pre-existing value in env OR in .env). Mirror idempotently to
-# ~/.um/auth-token with mode 600 — best-effort; chmod is a no-op on Windows
-# NTFS, where ACL inheritance from ~/.um (mode 700) provides equivalent
-# protection.
+# (no pre-existing value in env OR in .env). It is mirrored to ~/.um/auth-token
+# after the last prompt (see the note there).
 #
 # This block is placed BEFORE the prompt/collection loop so that the
 # resulting UM_AUTH_TOKEN is already in the environment by the time the
@@ -1234,16 +1232,6 @@ if [ -z "${UM_AUTH_TOKEN:-}" ]; then
 	info "Generated new UM_AUTH_TOKEN."
 fi
 export UM_AUTH_TOKEN
-
-# Mirror to ~/.um/auth-token (chmod 600). Parent dir gets 700. Best-effort
-# on Windows NTFS where chmod is a no-op — equivalent protection comes from
-# ACL inheritance off ~/.um.
-if [ -n "${HOME:-}" ]; then
-	mkdir -p "$HOME/.um"
-	chmod 700 "$HOME/.um" 2>/dev/null || true
-	printf '%s' "$UM_AUTH_TOKEN" > "$HOME/.um/auth-token"
-	chmod 600 "$HOME/.um/auth-token" 2>/dev/null || true
-fi
 
 # ─── Collect required values ─────────────────────────────────────────────────
 # _um_read [-s] [-w] <var> <way out>: every prompt reads its answer into <var>
@@ -1898,6 +1886,19 @@ _append_to_profile() {
 _SHELL_PROFILE=$(_detect_profile)
 info "Updating shell profile${_SHELL_PROFILE:+ ($_SHELL_PROFILE)}..."
 _append_to_profile "$_SHELL_PROFILE" "$_um_summarizer_default"
+
+# Mirror to ~/.um/auth-token (chmod 600). Parent dir gets 700. Best-effort
+# on Windows NTFS where chmod is a no-op — equivalent protection comes from
+# ACL inheritance off ~/.um. Written only now that the last prompt has been
+# answered: every login shell exports this file, and it may hold a token this
+# run did not make (installer/install.sh --remote writes one for a remote server),
+# so a run that stops at a prompt must leave it as it found it.
+if [ -n "${HOME:-}" ]; then
+	mkdir -p "$HOME/.um"
+	chmod 700 "$HOME/.um" 2>/dev/null || true
+	printf '%s' "$UM_AUTH_TOKEN" > "$HOME/.um/auth-token"
+	chmod 600 "$HOME/.um/auth-token" 2>/dev/null || true
+fi
 
 # ─── #320: non-loopback Qdrant publish warning ──────────────────────────────
 # Runs after .env is written so the check sees exactly what compose will read

@@ -59,6 +59,11 @@ assert_file_exists() {
   if [ -e "$file" ]; then pass "$name"; else fail_test "$name" "file not found: $file"; fi
 }
 
+assert_file_absent() {
+  local name="$1" file="$2"
+  if [ -e "$file" ]; then fail_test "$name" "file exists: $file"; else pass "$name"; fi
+}
+
 assert_exit_zero() {
   local name="$1" code="$2"
   if [ "$code" -eq 0 ]; then pass "$name"; else fail_test "$name" "exit code $code (expected 0)"; fi
@@ -2669,6 +2674,9 @@ T="$TMPROOT/teof-key"; _teof_setup "$T" 200
 _teof_check "hidden key prompt" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
 assert_not_contains "TEOF hidden key prompt: a first install has no .env to warn about" \
   "$TEOF_OUT" "$TEOF_ENV_WARNING"
+# ~/.um/auth-token mirrors the token in .env. A run that stops at a prompt has
+# not installed anything, and the shell block reads this file at every login.
+assert_file_absent "TEOF hidden key prompt: writes no ~/.um/auth-token" "$T/home/.um/auth-token"
 
 # An existing install's namespace, port and vault went back to default, 6335
 # and ~/.um/vault when its operator took the way out as given.
@@ -2715,6 +2723,23 @@ _teof_check "shell profile" "Re-run with --yes to add the settings to $T/home/.b
 # started no stack, so there is nothing for --upgrade to upgrade.
 assert_contains "TEOF shell profile: warns about the .env this run wrote" "$TEOF_OUT" "$TEOF_ENV_WARNING"
 assert_not_contains "TEOF shell profile: a first install is not sent to --upgrade" "$TEOF_OUT" "--upgrade"
+# This is the last prompt, and .env holds the token by now. The file still waits:
+# the run has not got past its prompts, and a re-run writes it from .env.
+assert_file_absent "TEOF shell profile: writes no ~/.um/auth-token" "$T/home/.um/auth-token"
+TEOF_RC=0
+_teof_run "$T" UM_NONINTERACTIVE=1 OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1 </dev/null > "$T/rerun.out" || TEOF_RC=$?
+assert_exit_zero "TEOF shell profile: a re-run finishes the install" "$TEOF_RC"
+TEOF_TOKEN=$(grep -E '^UM_AUTH_TOKEN=' "$T/server/.env" | cut -d= -f2-)
+if [ -n "$TEOF_TOKEN" ]; then pass "TEOF shell profile: .env holds a token"; else fail_test "TEOF shell profile: .env holds a token" "none"; fi
+assert_eq "TEOF shell profile: the re-run writes ~/.um/auth-token from .env" \
+  "$(cat "$T/home/.um/auth-token" 2>/dev/null)" "$TEOF_TOKEN"
+
+# A prompt it stops at leaves an existing token file as it was.
+T="$TMPROOT/teof-token-kept"; _teof_setup "$T" 200
+mkdir -p "$T/home/.um"; printf 'tok-before' > "$T/home/.um/auth-token"
+_teof_check "existing token file" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
+assert_eq "TEOF existing token file: a stop at a prompt leaves it alone" "$(cat "$T/home/.um/auth-token")" "tok-before"
 
 T="$TMPROOT/teof-last"; _teof_setup "$T" 200
 printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \
@@ -2780,11 +2805,7 @@ assert_contains "TEOF re-entered key with a trailing space: refused, not trimmed
   "UM_OPENAI_API_KEY contains whitespace"
 assert_eq "TEOF re-entered key with a trailing space: not sent to OpenAI" \
   "$(wc -l < "$T/bin/openai-probes" | tr -d ' ')" "1"
-if [ -e "$T/server/.env" ]; then
-  fail_test "TEOF re-entered key with a trailing space: .env not written" "$(grep -c 'OPENAI_API_KEY' "$T/server/.env")"
-else
-  pass "TEOF re-entered key with a trailing space: .env not written"
-fi
+assert_file_absent "TEOF re-entered key with a trailing space: .env not written" "$T/server/.env"
 
 # What the existing-install warning describes: a --yes re-run over a .env keeps
 # its token and takes the namespace, port, vault and key from the environment
