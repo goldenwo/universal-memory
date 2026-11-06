@@ -856,11 +856,11 @@ done
 git -C "$TPP/repo" init -q
 _tpp_commit() {
   git -C "$TPP/repo" -c user.name=t -c user.email=t@example.com -c commit.gpgsign=false -c core.hooksPath=/dev/null \
-    commit -q --allow-empty -m "$1"
+    commit -q --allow-empty "$@"
 }
-_tpp_commit "chore: base"
+_tpp_commit -m "chore: base"
 _tpp_base=$(git -C "$TPP/repo" rev-parse HEAD)
-_tpp_commit "feat(server): integration (B.14)"
+_tpp_commit -m "feat(server): integration (B.14)"
 _tpp_head=$(git -C "$TPP/repo" rev-parse HEAD)
 : > "$TPP/steps-stdin"
 TPP_EXIT=0
@@ -871,6 +871,45 @@ REFS
 if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-STDIN: the gate passes"; else fail "T-PREPUSH-STDIN: the gate exited $TPP_EXIT: $(cat "$TPP/hook.out")"; fi
 if [ "$(wc -l < "$TPP/steps-ran" | tr -d ' ')" = "4" ]; then pass "T-PREPUSH-STDIN: all four suites ran"; else fail "T-PREPUSH-STDIN: suites run: $(cat "$TPP/steps-ran" 2>/dev/null)"; fi
 if [ -s "$TPP/steps-stdin" ]; then fail "T-PREPUSH-STDIN: a step read git's ref lines: $(cat "$TPP/steps-stdin")"; else pass "T-PREPUSH-STDIN: no step read git's ref lines"; fi
+
+# ─── T-PREPUSH-LONG-RANGE: a long range still fires the gate ──────────────────
+# The check piped git log into grep -q under pipefail. grep stops at its first
+# match, git log dies writing the rest, and the pipeline then read as no match: the
+# push skipped the gate. An older subject far bigger than any pipe buffer means
+# git log always has output left when grep stops at the newest commit.
+echo ""
+echo "=== T-PREPUSH-LONG-RANGE: a match early in a long log fires the gate ==="
+{ printf 'chore: '; head -c 2000000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$TPP/huge-subject"
+_tpp_commit -F "$TPP/huge-subject"
+_tpp_commit -m "feat(server): integration (B.15)"
+_tpp_long_head=$(git -C "$TPP/repo" rev-parse HEAD)
+: > "$TPP/steps-ran"
+TPP_EXIT=0
+(cd "$TPP/repo" && PATH="$TPP/bin:$PATH" bash scripts/githooks/pre-push origin url > "$TPP/hook.out" 2>&1) <<REFS || TPP_EXIT=$?
+refs/heads/v1 $_tpp_long_head refs/heads/v1 $_tpp_base
+REFS
+if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-LONG-RANGE: the gate passes"; else fail "T-PREPUSH-LONG-RANGE: the hook exited $TPP_EXIT: $(tail -5 "$TPP/hook.out")"; fi
+if [ "$(wc -l < "$TPP/steps-ran" | tr -d ' ')" = "4" ]; then pass "T-PREPUSH-LONG-RANGE: all four suites ran"; else fail "T-PREPUSH-LONG-RANGE: the gate did not run; suites run: $(cat "$TPP/steps-ran" 2>/dev/null)"; fi
+
+# A range with no match still leaves the gate alone.
+_tpp_commit -m "chore: nothing to gate"
+_tpp_plain_head=$(git -C "$TPP/repo" rev-parse HEAD)
+: > "$TPP/steps-ran"
+TPP_EXIT=0
+(cd "$TPP/repo" && PATH="$TPP/bin:$PATH" bash scripts/githooks/pre-push origin url > "$TPP/hook.out" 2>&1) <<REFS || TPP_EXIT=$?
+refs/heads/v1 $_tpp_plain_head refs/heads/v1 $_tpp_long_head
+REFS
+if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-LONG-RANGE: a range with no match exits 0"; else fail "T-PREPUSH-LONG-RANGE: a range with no match exited $TPP_EXIT"; fi
+if [ -s "$TPP/steps-ran" ]; then fail "T-PREPUSH-LONG-RANGE: a range with no match ran the gate: $(cat "$TPP/steps-ran")"; else pass "T-PREPUSH-LONG-RANGE: a range with no match leaves the gate alone"; fi
+
+# A range git cannot read still leaves the gate alone, as it did before.
+: > "$TPP/steps-ran"
+TPP_EXIT=0
+(cd "$TPP/repo" && PATH="$TPP/bin:$PATH" bash scripts/githooks/pre-push origin url > "$TPP/hook.out" 2>&1) <<REFS || TPP_EXIT=$?
+refs/heads/v1 $_tpp_plain_head refs/heads/v1 1111111111111111111111111111111111111111
+REFS
+if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-LONG-RANGE: an unreadable range exits 0"; else fail "T-PREPUSH-LONG-RANGE: an unreadable range exited $TPP_EXIT"; fi
+if [ -s "$TPP/steps-ran" ]; then fail "T-PREPUSH-LONG-RANGE: an unreadable range ran the gate: $(cat "$TPP/steps-ran")"; else pass "T-PREPUSH-LONG-RANGE: an unreadable range leaves the gate alone"; fi
 rm -rf "$TPP"
 
 # ─── T-YES-REFUSAL: a piped install is told a way forward it can take ────────

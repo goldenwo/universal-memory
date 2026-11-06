@@ -2906,6 +2906,25 @@ assert_eq "TEOF re-entered key with a trailing space: not sent to OpenAI" \
   "$(wc -l < "$T/bin/openai-probes" | tr -d ' ')" "1"
 assert_file_absent "TEOF re-entered key with a trailing space: .env not written" "$T/server/.env"
 
+# A re-entered key replaces the rejected one wherever that one was copied. An
+# OPENAI_API_KEY set apart from UM_OPENAI_API_KEY is not ours to replace. Both runs
+# stop at the shell profile prompt, after .env is written.
+T="$TMPROOT/teof-reenter"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+printf 'sk-good-key\n' | _teof_run "$T" OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T/vault" >/dev/null 2>&1 || true
+assert_eq "TEOF re-entered key: UM_OPENAI_API_KEY is the new key" \
+  "$(grep -E '^UM_OPENAI_API_KEY=' "$T/server/.env" 2>/dev/null)" "UM_OPENAI_API_KEY=sk-good-key"
+assert_eq "TEOF re-entered key: the rejected key is not left in OPENAI_API_KEY" \
+  "$(grep -E '^OPENAI_API_KEY=' "$T/server/.env" 2>/dev/null)" "OPENAI_API_KEY=sk-good-key"
+
+T="$TMPROOT/teof-reenter-apart"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+printf 'sk-good-key\n' | _teof_run "$T" OPENAI_API_KEY=sk-other-tools UM_OPENAI_API_KEY=sk-badkey \
+  MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault" >/dev/null 2>&1 || true
+assert_eq "TEOF re-entered key, set apart: UM_OPENAI_API_KEY is the new key" \
+  "$(grep -E '^UM_OPENAI_API_KEY=' "$T/server/.env" 2>/dev/null)" "UM_OPENAI_API_KEY=sk-good-key"
+assert_eq "TEOF re-entered key, set apart: OPENAI_API_KEY stays as it was" \
+  "$(grep -E '^OPENAI_API_KEY=' "$T/server/.env" 2>/dev/null)" "OPENAI_API_KEY=sk-other-tools"
+
 # What the existing-install warning describes: a --yes re-run over a .env keeps
 # its token and takes the namespace, port, vault and key from the environment
 # or the defaults. If --yes ever keeps them, the warning goes with this case.

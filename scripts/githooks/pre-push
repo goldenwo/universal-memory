@@ -112,8 +112,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   trailer_pattern='^Phase-boundary:'
   subject_pattern='\([^)]*\b[A-Z]\.[0-9]+\b[^)]*\)'
 
-  if git log --format='%s%n%(trailers)' "$range" 2>/dev/null \
-     | grep -qE "$trailer_pattern|$subject_pattern"; then
+  # Read the whole log first. Piped into grep -q under pipefail, git log dies
+  # writing whatever is left after the first match, and the pipeline then reads
+  # as no match. A range git cannot read still counts as no match.
+  log=$(git log --format='%s%n%(trailers)' "$range" 2>/dev/null || true)
+  if grep -qE "$trailer_pattern|$subject_pattern" <<<"$log"; then
     triggered=1
     echo "[pre-push-phase-gate] phase-boundary commits detected in $range" >&2
     break

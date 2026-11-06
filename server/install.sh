@@ -1497,6 +1497,7 @@ else
 	# Validate UM_OPENAI_API_KEY (used by hooks). Loop on 401 in interactive mode.
 	_key_to_validate="${UM_OPENAI_API_KEY:-}"
 	if [ -n "$_key_to_validate" ]; then
+		_key_as_given="$_key_to_validate"
 		while true; do
 			if _validate_openai_key "$_key_to_validate"; then
 				break
@@ -1516,6 +1517,9 @@ else
 		done
 		UM_OPENAI_API_KEY="$_key_to_validate"
 		export UM_OPENAI_API_KEY
+		# A re-entered key replaces the rejected one wherever that one was copied. An
+		# OPENAI_API_KEY set apart from UM_OPENAI_API_KEY is not ours to replace.
+		[ "${OPENAI_API_KEY:-}" != "$_key_as_given" ] || OPENAI_API_KEY="$_key_to_validate"
 	fi
 fi
 
