@@ -2722,14 +2722,12 @@ printf 'myns' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0
 assert_eq "TEOF: a last answer with no newline counts" \
   "$(grep -E '^MEM0_USER_ID=' "$T/server/.env" 2>/dev/null)" "MEM0_USER_ID=myns"
 
-# A stdin that cannot be read at all (nohup from a terminal reopens fd 0
-# write-only) fails read without assigning: the rejected key stayed in place and
-# the 401 loop validated it again forever, and an answer with no earlier value
-# died on `unbound variable`. This curl rejects the first key and accepts any
-# after it, so a regression ends instead of hanging.
-T="$TMPROOT/teof-ebadf-401"; _teof_setup "$T" 401
-mv "$T/bin/curl" "$T/bin/curl-401"
-cat > "$T/bin/curl" <<'FAKE'
+# _teof_curl_rejects_first <dir>: this curl rejects the first key and accepts any
+# after it, so a regression in the 401 loop ends instead of hanging. Each probe
+# is a line in <dir>/bin/openai-probes.
+_teof_curl_rejects_first() {
+  mv "$1/bin/curl" "$1/bin/curl-401"
+  cat > "$1/bin/curl" <<'FAKE'
 #!/usr/bin/env bash
 d=$(dirname "$0")
 if [[ "$*" == *"openai.com"* ]]; then
@@ -2741,7 +2739,14 @@ if [[ "$*" == *"openai.com"* ]]; then
 fi
 exec "$d/curl-401" "$@"
 FAKE
-chmod +x "$T/bin/curl"
+  chmod +x "$1/bin/curl"
+}
+
+# A stdin that cannot be read at all (nohup from a terminal reopens fd 0
+# write-only) fails read without assigning: the rejected key stayed in place and
+# the 401 loop validated it again forever, and an answer with no earlier value
+# died on `unbound variable`.
+T="$TMPROOT/teof-ebadf-401"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
 _teof_check --unreadable "unreadable stdin at the rejected key" \
   "Export a valid UM_OPENAI_API_KEY and re-run with --yes." "$T" \
   OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault"
@@ -2763,6 +2768,23 @@ TEOF_OUT=$(printf 'sk-testkey12345 \n' | _teof_run "$T" OPENAI_API_KEY= MEM0_USE
 assert_exit_nonzero "TEOF key with a trailing space: exits non-zero" "$TEOF_RC"
 assert_contains "TEOF key with a trailing space: refused, not trimmed" "$TEOF_OUT" \
   "OPENAI_API_KEY contains whitespace"
+
+# The same goes for a key re-entered after a 401: the whitespace check runs before
+# the probe, so the new key missed it and went into .env.
+T="$TMPROOT/teof-ws-401"; _teof_setup "$T" 401; _teof_curl_rejects_first "$T"
+TEOF_RC=0
+TEOF_OUT=$(printf 'sk-testkey12345 \n' | _teof_run "$T" OPENAI_API_KEY=sk-badkey MEM0_USER_ID=testuser \
+  MEM0_MCP_PORT=6335 UM_VAULT_DIR="$T/vault") || TEOF_RC=$?
+assert_exit_nonzero "TEOF re-entered key with a trailing space: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF re-entered key with a trailing space: refused, not trimmed" "$TEOF_OUT" \
+  "UM_OPENAI_API_KEY contains whitespace"
+assert_eq "TEOF re-entered key with a trailing space: not sent to OpenAI" \
+  "$(wc -l < "$T/bin/openai-probes" | tr -d ' ')" "1"
+if [ -e "$T/server/.env" ]; then
+  fail_test "TEOF re-entered key with a trailing space: .env not written" "$(grep -c 'OPENAI_API_KEY' "$T/server/.env")"
+else
+  pass "TEOF re-entered key with a trailing space: .env not written"
+fi
 
 # What the existing-install warning describes: a --yes re-run over a .env keeps
 # its token and takes the namespace, port, vault and key from the environment

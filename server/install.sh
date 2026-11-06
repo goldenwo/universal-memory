@@ -1507,6 +1507,7 @@ else
 			_um_read -w -s _key_to_validate "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
 			echo >&2
 			[ -z "$_key_to_validate" ] && fail "Empty key — aborting."
+			[[ "$_key_to_validate" =~ [[:space:]] ]] && fail "UM_OPENAI_API_KEY contains whitespace — refusing to write to .env."
 		done
 		UM_OPENAI_API_KEY="$_key_to_validate"
 		export UM_OPENAI_API_KEY
