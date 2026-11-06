@@ -2717,6 +2717,7 @@ _teof_check() {
 # A --yes re-run takes most settings from the environment or the defaults, so
 # with a .env in place every way out says what --yes would rewrite in it.
 TEOF_ENV_WARNING="--yes rewrites most of the settings in"
+TEOF_ANSWERS_LOST="The answers you already gave are not kept either"
 
 # Every way out ends in --yes: a re-run that answers only this prompt stops at
 # the next one.
@@ -2724,6 +2725,7 @@ T="$TMPROOT/teof-key"; _teof_setup "$T" 200
 _teof_check "hidden key prompt" "Export OPENAI_API_KEY and re-run with --yes." "$T" OPENAI_API_KEY=
 assert_not_contains "TEOF hidden key prompt: a first install has no .env to warn about" \
   "$TEOF_OUT" "$TEOF_ENV_WARNING"
+assert_not_contains "TEOF hidden key prompt: no answers given, none to lose" "$TEOF_OUT" "$TEOF_ANSWERS_LOST"
 # ~/.um/auth-token mirrors the token in .env. A run that stops at a prompt has
 # not installed anything, and the shell block reads this file at every login.
 assert_file_absent "TEOF hidden key prompt: writes no ~/.um/auth-token" "$T/home/.um/auth-token"
@@ -2748,6 +2750,53 @@ assert_contains "TEOF existing install, spaced path: the upgrade command quotes 
 T="$TMPROOT/teof-ns"; _teof_setup "$T" 200
 _teof_check "plain prompt" "Re-run with --yes to take the defaults (export MEM0_USER_ID first to choose your own)." "$T" \
   OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID=
+assert_not_contains "TEOF plain prompt: no answers given, none to lose" "$TEOF_OUT" "$TEOF_ANSWERS_LOST"
+
+# Piped answers that run out: a --yes re-run reads none of them, and would put the
+# environment's value or the default in their place without a word. So the stop
+# names what would be lost. Only names: a key must never reach the screen.
+T="$TMPROOT/teof-partial"; _teof_setup "$T" 200
+TEOF_RC=0
+TEOF_OUT=$(printf 'sk-PIPED-KEY\nmy-piped-ns\n' | _teof_run "$T" OPENAI_API_KEY= MEM0_USER_ID= MEM0_MCP_PORT= \
+  UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1) || TEOF_RC=$?
+assert_exit_nonzero "TEOF partial answers: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF partial answers: stops at the first prompt with no answer" "$TEOF_OUT" \
+  "export MEM0_MCP_PORT first to choose your own"
+assert_contains "TEOF partial answers: names the answers it would lose" "$TEOF_OUT" \
+  "$TEOF_ANSWERS_LOST: export OPENAI_API_KEY MEM0_USER_ID first to keep them."
+assert_not_contains "TEOF partial answers: never prints the key" "$TEOF_OUT" "sk-PIPED-KEY"
+assert_file_absent "TEOF partial answers: writes no .env" "$T/server/.env"
+
+# A default taken at a prompt is the default --yes takes, so it is not lost.
+T="$TMPROOT/teof-partial-default"; _teof_setup "$T" 200
+TEOF_RC=0
+TEOF_OUT=$(printf '\n' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT= \
+  UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1) || TEOF_RC=$?
+assert_exit_nonzero "TEOF a default taken: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF a default taken: stops at the next prompt" "$TEOF_OUT" \
+  "export MEM0_MCP_PORT first to choose your own"
+assert_not_contains "TEOF a default taken: not an answer to lose" "$TEOF_OUT" "$TEOF_ANSWERS_LOST"
+
+# With a .env in place, the warning about what --yes rewrites already says this.
+T="$TMPROOT/teof-partial-env"; _teof_setup "$T" 200
+printf 'MEM0_USER_ID=before\n' > "$T/server/.env"
+TEOF_RC=0
+TEOF_OUT=$(printf 'my-piped-ns\n' | _teof_run "$T" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT= \
+  UM_VAULT_DIR="$T/vault" UM_SKIP_KEY_VALIDATION=1) || TEOF_RC=$?
+assert_exit_nonzero "TEOF partial answers over a .env: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF partial answers over a .env: warns what --yes rewrites" "$TEOF_OUT" "$TEOF_ENV_WARNING"
+assert_not_contains "TEOF partial answers over a .env: does not say it twice" "$TEOF_OUT" "$TEOF_ANSWERS_LOST"
+
+# The rejected key is not an answer worth keeping: this way out asks for a valid one.
+T="$TMPROOT/teof-partial-401"; _teof_setup "$T" 401
+TEOF_RC=0
+TEOF_OUT=$(printf 'sk-badkey\nmy-piped-ns\n6335\n' | _teof_run "$T" OPENAI_API_KEY= MEM0_USER_ID= MEM0_MCP_PORT= \
+  UM_VAULT_DIR="$T/vault") || TEOF_RC=$?
+assert_exit_nonzero "TEOF partial answers, key rejected: exits non-zero" "$TEOF_RC"
+assert_contains "TEOF partial answers, key rejected: asks for a valid key" "$TEOF_OUT" \
+  "Export a valid UM_OPENAI_API_KEY and re-run with --yes."
+assert_contains "TEOF partial answers, key rejected: names the answer it would lose" "$TEOF_OUT" \
+  "$TEOF_ANSWERS_LOST: export MEM0_USER_ID first to keep them."
 
 T="$TMPROOT/teof-cu"; _teof_setup "$T" 200
 printf 'UM_CONTAINER_USER=1001:1001\n' > "$T/server/.env"
