@@ -2385,6 +2385,8 @@ done
 #                       itself failed
 #   FAKE_RESTART_COUNT  RestartCount of the memory-server container
 #   FAKE_RUN_STDIN      file the check appends its stdin to (compose run reads it)
+#   FAKE_UP_STDIN       file `up -d`, and every docker call after it, appends its
+#                       stdin to (compose reads it when it has a question)
 make_fake_docker_envcheck() {
   local dest="$1"
   mkdir -p "$dest"
@@ -2392,6 +2394,9 @@ make_fake_docker_envcheck() {
 #!/usr/bin/env bash
 args="$*"
 [ -n "${FAKE_DOCKER_LOG:-}" ] && printf 'ARGS=%s\n' "$args" >> "$FAKE_DOCKER_LOG"
+if [ -n "${FAKE_UP_STDIN:-}" ] && { [[ "$args" == *" up -d"* ]] || [ -e "$FAKE_UP_STDIN" ]; }; then
+  cat >> "$FAKE_UP_STDIN"
+fi
 case "$args" in
   *"compose version"*) echo "Docker Compose version v2.27.0"; exit 0 ;;
   info|*" info"*)      echo "{}"; exit 0 ;;
@@ -2549,8 +2554,7 @@ assert_eq "TCE7: the history dir existed when the check ran" "$(cat "$TCE7/run-s
 # A deploy script piped to a shell (ssh host 'bash -s' < deploy.sh) hands
 # install.sh that script as stdin. compose run reads stdin, so the check took
 # the rest of the deploy script (#403). --upgrade closes its stdin outright
-# (TCE9); an install keeps stdin for its prompts, so there the check's own
-# redirect is what holds.
+# (TCE9); an install closes it once its prompts are over (TCE10, TCE11).
 echo ""
 echo "=== TCE8: an install's config check reads none of the caller's stdin ==="
 T="$TMPROOT/tce8"; _ce_setup "$T"
@@ -2580,6 +2584,44 @@ TCE9_EXIT=0
 } <<< 'echo LEFT-FOR-THE-CALLER'
 assert_exit_zero "TCE9: --upgrade exits 0" "$TCE9_EXIT"
 assert_eq "TCE9: the caller's stdin is left for the caller" "$(cat "$TCE9/left")" "echo LEFT-FOR-THE-CALLER"
+
+# The install path has the same door once its prompts are over: a deploy script
+# running `bash server/install.sh --yes` through `ssh host 'bash -s'` handed
+# compose up -d the rest of itself.
+echo ""
+echo "=== TCE10: --yes leaves the caller's stdin unread ==="
+T="$TMPROOT/tce10"; _ce_setup "$T"
+TCE10_EXIT=0
+{
+  _ce_install "$T" FAKE_UP_STDIN="$T/up-stdin" > "$T/install.out" || TCE10_EXIT=$?
+  cat > "$T/left"
+} <<< 'echo LEFT-FOR-THE-CALLER'
+assert_exit_zero "TCE10: install exits 0" "$TCE10_EXIT"
+assert_file_exists "TCE10: compose up -d ran and read its stdin" "$T/up-stdin"
+assert_eq "TCE10: compose up -d got none of the caller's stdin" "$(cat "$T/up-stdin" 2>/dev/null)" ""
+assert_eq "TCE10: the caller's stdin is left for the caller" "$(cat "$T/left")" "echo LEFT-FOR-THE-CALLER"
+
+# Without --yes the prompts still read stdin, up to the last one (the shell
+# profile); only what follows them is the caller's.
+echo ""
+echo "=== TCE11: the prompts read their answers, and the rest stays unread ==="
+T="$TMPROOT/tce11"; _ce_setup "$T"
+TCE11_EXIT=0
+{
+  run_install "$T/bin" "$T/server/install.sh" OPENAI_API_KEY=sk-testkey12345 MEM0_USER_ID= MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$T/vault" CLAUDE_PLUGINS_DIR="$T/plugins" UM_SKIP_KEY_VALIDATION=1 SHELL=/bin/bash \
+    HOME="$T/home" FAKE_UP_STDIN="$T/up-stdin" > "$T/install.out" || TCE11_EXIT=$?
+  cat > "$T/left"
+} <<'ANSWERS'
+myns
+n
+echo LEFT-FOR-THE-CALLER
+ANSWERS
+assert_exit_zero "TCE11: install exits 0" "$TCE11_EXIT"
+assert_eq "TCE11: the first prompt read its answer" "$(grep -E '^MEM0_USER_ID=' "$T/server/.env")" "MEM0_USER_ID=myns"
+assert_contains "TCE11: the last prompt read its answer" "$(cat "$T/install.out")" "Shell profile update skipped"
+assert_eq "TCE11: compose up -d got none of the caller's stdin" "$(cat "$T/up-stdin" 2>/dev/null)" ""
+assert_eq "TCE11: the caller's stdin is left for the caller" "$(cat "$T/left")" "echo LEFT-FOR-THE-CALLER"
 
 # ─── TEOF: a prompt with nothing on stdin says what to do instead ────────────
 # `curl ... | bash` with no flags installs everything without --yes, so

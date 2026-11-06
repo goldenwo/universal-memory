@@ -311,10 +311,10 @@ _um_check_env_in_image() {
 	# The one-off container bind-mounts the history dir like the server does; a
 	# source dir Docker creates is root-owned (see _um_ensure_history_dir).
 	_um_ensure_history_dir
-	# </dev/null: compose run reads stdin, and from a piped deploy script
-	# (ssh host 'bash -s' < deploy.sh) that is the rest of the script.
+	# compose run reads stdin. Both callers have closed theirs by now: from a piped
+	# deploy script (ssh host 'bash -s' < deploy.sh) it is the rest of the script.
 	_UM_ENVCHECK_OUT=$(_compose run --rm --no-deps -T --entrypoint sh memory-server \
-		-c '[ -f bin/check-env.mjs ] || exit 3; exec node bin/check-env.mjs' 2>&1 </dev/null) || _rc=$?
+		-c '[ -f bin/check-env.mjs ] || exit 3; exec node bin/check-env.mjs' 2>&1) || _rc=$?
 	if [ "$_rc" -eq 1 ] && ! printf '%s\n' "$_UM_ENVCHECK_OUT" | grep -q '^\[check-env\] FATAL'; then
 		_rc=2
 	fi
@@ -1908,6 +1908,11 @@ if [ -n "$_qbad" ]; then
 fi
 
 # ─── Start stack ─────────────────────────────────────────────────────────────
+# The last prompt is behind us, so nothing from here on reads the caller's stdin.
+# Run through `ssh host 'bash -s'`, it is the rest of the deploy script, and
+# compose reads it whenever it has a question (--upgrade's note has the measured
+# case). On a terminal too, compose's question now gets no answer, as under --upgrade.
+exec </dev/null
 if [ "${UM_SKIP_DOCKER:-0}" -eq 1 ]; then
 	info "Skipping docker stack start (--skip-docker set)."
 else
