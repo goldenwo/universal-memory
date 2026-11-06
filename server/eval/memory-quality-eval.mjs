@@ -2149,6 +2149,13 @@ export async function stalenessPass({ umAdd, doSearch, detectContradictionsInBat
   };
 }
 
+// The bouncer's 1500 ms timeout protects a live search, and this pass measures whether a grade
+// is right, so it waits longer and only guards against a call that never returns (#408). Under
+// the 1500 ms timeout, 6-31% of the Phase B grades came back ok:false, which dropped those rows
+// from the rates. The three sweep runs graded the same 96 queries with no timeout: 29-37% took
+// over 1500 ms, the slowest took 4.6 s, and none of the 288 failed.
+export const ANSWER_PASS_GRADE_TIMEOUT_MS = 15_000;
+
 /**
  * Answer-correctness pass (opt-in via --no-answer). Grades doSearch top-1 (body-level,
  * full=true) over the answerable recall queries AND the unanswerable no-answer queries
@@ -2157,7 +2164,7 @@ export async function stalenessPass({ umAdd, doSearch, detectContradictionsInBat
  * (grader ok:false) are EXCLUDED from the rate denominators (never silently bias a rate).
  * Deps are injected (gradeAnswer/doSearch) so this is unit-testable without live calls.
  */
-export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau, high = Number.POSITIVE_INFINITY, imputation = undefined }) {
+export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, recallRows, noAnswerRows, model, tau, high = Number.POSITIVE_INFINITY, imputation = undefined, gradeTimeoutMs = ANSWER_PASS_GRADE_TIMEOUT_MS }) {
   const searchCtx = imputation ? { memory, _undatedImputation: imputation } : { memory }; // #297 seam
   const gradeTop1 = async (query) => {
     const sr = await doSearch(query, 10, false, true, searchCtx);
@@ -2168,11 +2175,18 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
     // reality with the bouncer OFF = the #132 baseline; §4d/§4f no-perturbation). The sweep
     // (sweepBounceGate) passes explicit gates to pin BOUNCER_SCORE_GATE. gradeAnswer is
     // injected (with model) so the grade is a single LLM call per non-skipped query.
+    // bounceTopHit keeps only ok, so the grader's own account of a failure is kept here. With
+    // none, the grade never came back: it hit gradeTimeoutMs or threw.
+    let grade;
     const bounce = await bounceTopHit(query, top, {
-      enabled: true, high, tau,
-      gradeAnswer: (q, body) => gradeAnswer(q, body, { model }),
+      enabled: true, high, tau, timeoutMs: gradeTimeoutMs,
+      gradeAnswer: async (q, body) => (grade = await gradeAnswer(q, body, { model })),
     });
-    return { topHitAnswered: bounce.answered, ok: bounce.ok, skippedHigh: bounce.skippedHigh === true };
+    const failure = bounce.ok ? {} : {
+      failCause: grade ? (grade.failCause ?? 'unknown') : 'no-response',
+      stopReason: grade?.stopReason ?? null,
+    };
+    return { topHitAnswered: bounce.answered, ok: bounce.ok, skippedHigh: bounce.skippedHigh === true, ...failure };
   };
   const answerable = [];
   for (const row of recallRows) answerable.push({ id: row.id, ...(await gradeTop1(row.query)) });
@@ -2183,6 +2197,12 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
   const okNoAnswer = noAnswer.filter((r) => r.ok === true);
   const all = [...answerable, ...noAnswer];
   const skipped = all.filter((r) => r.skippedHigh === true).length;
+  const failedRows = [
+    ...answerable.filter((r) => r.ok !== true).map((r) => ({ id: r.id, answerable: true, failCause: r.failCause, stopReason: r.stopReason })),
+    ...noAnswer.filter((r) => r.ok !== true).map((r) => ({ id: r.id, answerable: false, failCause: r.failCause, stopReason: r.stopReason })),
+  ];
+  const failCauses = {};
+  for (const { failCause } of failedRows) failCauses[failCause] = (failCauses[failCause] ?? 0) + 1;
   return {
     answerCorrectness: {
       total: okAnswerable.length,
@@ -2196,7 +2216,9 @@ export async function answerCorrectnessPass({ gradeAnswer, doSearch, memory, rec
       precision: noAnswerPrecision(okNoAnswer),
     },
     bouncer: { high, skipped, skipRate: all.length ? skipped / all.length : 0 },
-    answerGrader: { model, tau, parseFails: (answerable.length - okAnswerable.length) + (noAnswer.length - okNoAnswer.length) },
+    // parseFails counts every ok:false row, whatever the cause, as the committed results do.
+    // failCauses and failedRows say what each one was.
+    answerGrader: { model, tau, parseFails: failedRows.length, failCauses, failedRows },
   };
 }
 
