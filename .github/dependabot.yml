@@ -49,3 +49,15 @@ updates:
       # the tarball or restores a prebuild-aware install.
       - dependency-name: "better-sqlite3"
         versions: [">=13.0.0"]
+
+      # @anthropic-ai/sdk must stay on 0.x: 1.0.0 moves every request to API
+      # version 2026-10-21, and Anthropic's migration guide says that version
+      # answers 400 to any temperature, even the default. The judge and facts
+      # send temperature 0 on models outside MODEL_CAPABILITIES, including the
+      # Haiku 4.5 pin the v1.30.0 release notes give. Like the qdrant pin this
+      # would NOT fail CI: the provider tests inject a fake client, so PR #418
+      # passed the whole suite. No live call was made; a local stub showed the
+      # version header change. Re-take when Haiku 4.5 retires or 2023-06-01 is
+      # announced as ending.
+      - dependency-name: "@anthropic-ai/sdk"
+        versions: [">=1.0.0"]
