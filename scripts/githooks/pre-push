@@ -89,6 +89,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     refs/heads/v*) ;;
     *) continue ;;
   esac
+  # A branch deletion (all-zero local sha) pushes no commits, so there is
+  # nothing to gate.
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
 
   # Determine the commit range being pushed.
   # If `remote_sha` is the all-zeros SHA, the branch is new; compare against
