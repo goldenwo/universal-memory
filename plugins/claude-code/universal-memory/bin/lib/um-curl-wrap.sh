@@ -10,6 +10,9 @@
 #   error codes it emits a human-friendly message to stderr and returns 1.
 #   On network failure (empty status, or 000 when curl could not connect) it prints a "could not reach server"
 #   message. All original curl args (headers, URL, etc.) pass through via "$@".
+#   curl's own stderr is dropped, not merged: Git Bash's curl writes its
+#   "curl: (7) ..." error straight after the status with no newline between,
+#   which turned "000" into "000curl: (7) ..." and a "server error" message.
 #
 #   NOTE: Do NOT use this wrapper for fire-and-forget / best-effort reindex
 #   calls. Those already use inline || echo fallback patterns.
@@ -17,7 +20,7 @@
 _um_curl_wrap() {
   local name="$1"; shift
   local out status body
-  out=$(curl "$@" -w $'\n%{http_code}' 2>&1) || true
+  out=$(curl "$@" -w $'\n%{http_code}' 2>/dev/null) || true
   status=$(printf '%s' "$out" | tail -n1)
   body=$(printf '%s' "$out" | head -n -1)
   case "$status" in

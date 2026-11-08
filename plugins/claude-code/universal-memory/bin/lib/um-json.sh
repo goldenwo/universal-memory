@@ -5,7 +5,8 @@
 # for the CLI (install-cli.sh refuses without it); jq is not, and a fresh
 # Ubuntu has none, so `um state`, `um list` and `um recent` failed with
 # "jq is required" (2026-10-14 clean-room install). The python branches print
-# what the jq filters print: compact JSON, one object per line.
+# what the jq filters print: compact JSON, one object per line. They write LF
+# line endings on every platform; Windows python would otherwise write CRLF.
 #
 # Contract: source this file, then pipe a server response into
 #   _um_json_results                → one compact object per `.results[]` entry
@@ -26,6 +27,7 @@ _um_json_python() {
 _um_json_results_py() {
   local py; py=$(_um_json_python) || return 3
   "$py" -c 'import sys, json
+sys.stdout.reconfigure(newline="\n")
 for r in (json.load(sys.stdin).get("results") or []):
     print(json.dumps(r, separators=(",", ":"), ensure_ascii=False))'
 }
@@ -33,6 +35,7 @@ for r in (json.load(sys.stdin).get("results") or []):
 _um_json_state_py() {
   local mode="$1" py; py=$(_um_json_python) || return 3
   "$py" -c 'import sys, json
+sys.stdout.reconfigure(newline="\n")
 d = json.load(sys.stdin)
 raw = (d.get("state") or {}).get("body")
 missing = raw is None or raw is False  # jq `//` falls through on null/false only

@@ -459,6 +459,27 @@ for sub in search state recent list; do
   assert_contains "T13: um $sub reports an unreachable server" "$T13_OUT" "could not reach server"
 done
 
+# T13b: curl's error text must not reach the status line. Git Bash's curl 8.17
+# writes the -w status ("\n000") before its own "curl: (7) ..." error, with no
+# newline between them, so a wrapper that reads 2>&1 sees "000curl: (7) ..."
+# and reports "server error" instead. Linux and macOS curl write the error
+# first, so T13 passes there; this stub writes them in the Git Bash order on
+# every platform.
+T13B_BIN=$(mktemp_in_t "$TMPROOT" "t13b.XXXXXX")
+cat > "$T13B_BIN/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '\n000'
+printf 'curl: (7) Failed to connect to 127.0.0.1 port 9 after 0 ms: Could not connect to server\n' >&2
+exit 7
+STUB
+chmod +x "$T13B_BIN/curl"
+for sub in search state recent list; do
+  case "$sub" in search) arg=probe ;; state) arg=t13 ;; *) arg="" ;; esac
+  T13B_OUT=$(env -u UM_CLI_DIR -u UM_LIB_DIR UM_SERVER_URL=http://127.0.0.1:9 \
+    PATH="$T13B_BIN:$T1_HOME/.local/bin:$PATH" HOME="$T1_HOME" um "$sub" ${arg:+"$arg"} 2>&1) || true
+  assert_contains "T13b: um $sub reports an unreachable server when curl's error follows the status" "$T13B_OUT" "could not reach server"
+done
+
 # ─── T14: the read subcommands work without jq ───────────────────────────────
 # `um state`, `um list` and `um recent` exited "jq is required" on a fresh
 # Ubuntu (2026-10-14 clean room #2): jq is not a prerequisite, python3 is. The
@@ -471,7 +492,10 @@ T14_LIB="$T1_HOME/.local/share/um/cli/lib/um-json.sh"
 assert_file_exists "T14: um-json.sh installed with the CLI" "$T14_LIB"
 T14_BIN=$(mktemp_in_t "$TMPROOT" "t14.XXXXXX")
 T14_PY=$(command -v python3 || command -v python)
-ln -s "$T14_PY" "$T14_BIN/python3"
+# A wrapper, not `ln -s`: Git Bash's ln -s copies the file, and a copied
+# Windows Python launcher can no longer find its install.
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$T14_PY" > "$T14_BIN/python3"
+chmod +x "$T14_BIN/python3"
 T14_RESULTS='{"ok":true,"results":[{"id":"a","title":"Café ✓","score":0.5,"metadata":{"k":[1,2],"n":null}},{"id":"b","title":"x"}]}'
 T14_STATE='{"ok":true,"project":"p","state":{"frontmatter":{"a":1},"body":"# S\nline two"},"valid_from":"2026-10-14T00:00:00Z"}'
 T14_NULL='{"ok":true,"project":"p","state":null,"valid_from":null}'
@@ -484,9 +508,12 @@ assert_eq "T14: state json without jq" "$(_t14 _um_json_state "$T14_STATE" json)
 assert_eq "T14: null state text without jq → nothing" "$(_t14 _um_json_state "$T14_NULL" text)" ""
 assert_eq "T14: null state json without jq" "$(_t14 _um_json_state "$T14_NULL" json)" '{"project":"p","body":"","valid_from":null}'
 if command -v jq >/dev/null 2>&1; then
-  assert_eq "T14: results match jq" "$T14_R" "$(printf '%s' "$T14_RESULTS" | jq -c '.results // [] | .[]')"
-  assert_eq "T14: state json matches jq" "$(_t14 _um_json_state "$T14_STATE" json)" "$(printf '%s' "$T14_STATE" | jq -c '{project: .project, body: (.state.body // ""), valid_from: .valid_from}')"
-  assert_eq "T14: state text matches jq" "$(_t14 _um_json_state "$T14_STATE" text)" "$(printf '%s' "$T14_STATE" | jq -r '.state.body // empty')"
+  # The reference only: a native Windows jq.exe writes CRLF to a pipe. The
+  # helper's own output above is held to LF exactly.
+  _t14_jq() { jq "$@" | tr -d '\r'; }
+  assert_eq "T14: results match jq" "$T14_R" "$(printf '%s' "$T14_RESULTS" | _t14_jq -c '.results // [] | .[]')"
+  assert_eq "T14: state json matches jq" "$(_t14 _um_json_state "$T14_STATE" json)" "$(printf '%s' "$T14_STATE" | _t14_jq -c '{project: .project, body: (.state.body // ""), valid_from: .valid_from}')"
+  assert_eq "T14: state text matches jq" "$(_t14 _um_json_state "$T14_STATE" text)" "$(printf '%s' "$T14_STATE" | _t14_jq -r '.state.body // empty')"
 fi
 
 # ─── Summary ──────────────────────────────────────────────────────────────────

@@ -902,14 +902,26 @@ REFS
 if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-LONG-RANGE: a range with no match exits 0"; else fail "T-PREPUSH-LONG-RANGE: a range with no match exited $TPP_EXIT"; fi
 if [ -s "$TPP/steps-ran" ]; then fail "T-PREPUSH-LONG-RANGE: a range with no match ran the gate: $(cat "$TPP/steps-ran")"; else pass "T-PREPUSH-LONG-RANGE: a range with no match leaves the gate alone"; fi
 
-# A range git cannot read still leaves the gate alone, as it did before.
+# A range git cannot read runs the gate: not knowing what is pushed is not the
+# same as knowing there is no phase boundary in it. (Until 2026-11 it skipped.)
 : > "$TPP/steps-ran"
 TPP_EXIT=0
 (cd "$TPP/repo" && PATH="$TPP/bin:$PATH" bash scripts/githooks/pre-push origin url > "$TPP/hook.out" 2>&1) <<REFS || TPP_EXIT=$?
 refs/heads/v1 $_tpp_plain_head refs/heads/v1 1111111111111111111111111111111111111111
 REFS
-if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-LONG-RANGE: an unreadable range exits 0"; else fail "T-PREPUSH-LONG-RANGE: an unreadable range exited $TPP_EXIT"; fi
-if [ -s "$TPP/steps-ran" ]; then fail "T-PREPUSH-LONG-RANGE: an unreadable range ran the gate: $(cat "$TPP/steps-ran")"; else pass "T-PREPUSH-LONG-RANGE: an unreadable range leaves the gate alone"; fi
+if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-LONG-RANGE: an unreadable range passes a green gate"; else fail "T-PREPUSH-LONG-RANGE: an unreadable range exited $TPP_EXIT: $(tail -5 "$TPP/hook.out")"; fi
+if [ "$(wc -l < "$TPP/steps-ran" 2>/dev/null | tr -d ' ')" = "4" ]; then pass "T-PREPUSH-LONG-RANGE: an unreadable range runs the gate"; else fail "T-PREPUSH-LONG-RANGE: an unreadable range skipped the gate; suites run: $(cat "$TPP/steps-ran" 2>/dev/null)"; fi
+if grep -q "cannot read" "$TPP/hook.out"; then pass "T-PREPUSH-LONG-RANGE: the hook says why it ran"; else fail "T-PREPUSH-LONG-RANGE: no 'cannot read' line: $(tail -5 "$TPP/hook.out")"; fi
+
+# Deleting a v* branch pushes nothing: git sends an all-zero local sha, which
+# makes a range git cannot read. That must not run the gate.
+: > "$TPP/steps-ran"
+TPP_EXIT=0
+(cd "$TPP/repo" && PATH="$TPP/bin:$PATH" bash scripts/githooks/pre-push origin url > "$TPP/hook.out" 2>&1) <<REFS || TPP_EXIT=$?
+(delete) 0000000000000000000000000000000000000000 refs/heads/v1 $_tpp_plain_head
+REFS
+if [ "$TPP_EXIT" -eq 0 ]; then pass "T-PREPUSH-LONG-RANGE: deleting a v* branch exits 0"; else fail "T-PREPUSH-LONG-RANGE: deleting a v* branch exited $TPP_EXIT"; fi
+if [ -s "$TPP/steps-ran" ]; then fail "T-PREPUSH-LONG-RANGE: deleting a v* branch ran the gate: $(cat "$TPP/steps-ran")"; else pass "T-PREPUSH-LONG-RANGE: deleting a v* branch leaves the gate alone"; fi
 rm -rf "$TPP"
 
 # ─── T-YES-REFUSAL: a piped install is told a way forward it can take ────────

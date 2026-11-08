@@ -89,6 +89,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     refs/heads/v*) ;;
     *) continue ;;
   esac
+  # A branch deletion (all-zero local sha) pushes no commits, so there is
+  # nothing to gate.
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
 
   # Determine the commit range being pushed.
   # If `remote_sha` is the all-zeros SHA, the branch is new; compare against
@@ -114,8 +117,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
   # Read the whole log first. Piped into grep -q under pipefail, git log dies
   # writing whatever is left after the first match, and the pipeline then reads
-  # as no match. A range git cannot read still counts as no match.
-  log=$(git log --format='%s%n%(trailers)' "$range" 2>/dev/null || true)
+  # as no match. A range git cannot read (say, a remote sha this clone has
+  # never fetched) runs the gate: not knowing what is pushed is not knowing
+  # there is no phase boundary in it.
+  if ! log=$(git log --format='%s%n%(trailers)' "$range" 2>/dev/null); then
+    triggered=1
+    echo "[pre-push-phase-gate] cannot read $range — running the gate instead of skipping it" >&2
+    break
+  fi
   if grep -qE "$trailer_pattern|$subject_pattern" <<<"$log"; then
     triggered=1
     echo "[pre-push-phase-gate] phase-boundary commits detected in $range" >&2
