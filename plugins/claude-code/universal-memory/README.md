@@ -34,8 +34,9 @@ Or from a repo checkout: `bash installer/install.sh --plugin-cc`
 Codex CLI installs this same plugin from the same marketplace:
 `codex plugin marketplace add goldenwo/universal-memory`, then
 `codex plugin add universal-memory@universal-memory` (or
-`bash installer/install.sh --plugin-codex`). Approve the hooks once when `codex`
-first lists them; see [Codex on Windows](#codex-on-windows) for the approval rules.
+`bash installer/install.sh --plugin-codex`). Approve the hooks when `codex` lists
+them: at first install and, on Codex 0.164 and later, after each update. See
+[Codex hook approval](#codex-hook-approval).
 
 ## First run: `/um-setup`
 
@@ -108,12 +109,22 @@ launcher looks. A launcher that finds no Git Bash logs `skip=no-git-bash` to `~/
 lets the session continue. A Codex home whose path contains `^`, `$`, a backtick or a curly quote
 is not supported: the hooks fail to start (move it with `CODEX_HOME`).
 
-Codex runs only hooks you have approved, and asks again whenever a hook's command changes. The
-update that introduced this launcher changed the Windows command of all four hooks, so approve the
-universal-memory hooks once when interactive `codex` lists them at startup (if other hooks are
-waiting too, the review option approves them one at a time); until you do, Codex runs none of
-them. `codex exec` never asks, so if you only use `codex exec`, open `codex` once to approve.
-macOS and Linux are unaffected.
+### Codex hook approval
+
+Codex runs only hooks you have approved. Interactive `codex` lists new or changed hooks at
+startup: choose **Trust all and continue** (if other hooks are waiting too, the review option
+approves them one at a time). Until you do, Codex runs none of them. `codex exec` never asks, so if
+you only use `codex exec`, open `codex` once to approve.
+
+What makes Codex ask again depends on its version:
+
+- **Before 0.164.0**: a change to a hook's own definition in `hooks/hooks.json` (event, matcher,
+  command, timeout). `hooks/hooks-json.test.sh` pins those, so an update normally asks nothing. The
+  one update that did was the one that introduced `run-hook.cmd`, which changed the Windows command
+  of all four hooks.
+- **0.164.0 and later**: that, or a change to any file in the installed plugin. Every
+  universal-memory update changes at least the version number, so Codex asks again after each
+  update, on every platform.
 
 ## The `um` CLI
 
