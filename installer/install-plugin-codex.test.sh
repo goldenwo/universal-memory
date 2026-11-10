@@ -122,6 +122,7 @@ assert_eq "C1: marketplace add, upgrade, plugin add — in that order" "$(calls_
 assert_absent "C1: no copy under ~/.codex/plugins" "$T/home/.codex/plugins/universal-memory"
 assert_contains "C1: says where Codex installed it" "$TX_OUT_C1" "plugins/cache/universal-memory/universal-memory/1.28.2"
 assert_contains "C1: names the one step left — trusting the hooks" "$TX_OUT_C1" "trust the universal-memory hooks"
+assert_contains "C1: says a newer Codex asks again after each update" "$TX_OUT_C1" "asks again after each universal-memory update"
 if [ -e "$T/home/.bashrc" ] || [ -e "$T/home/.zshrc" ] || [ -e "$T/home/.profile" ]; then
   fail_test "C1: no shell rc written" "an rc file appeared in $T/home"
 else
@@ -131,12 +132,15 @@ fi
 # ─── C2: a re-run moves an existing install forward ──────────────────────────
 # Codex has no `plugin update`: upgrade refreshes the Git marketplace, and a
 # repeated `plugin add` installs its current version (measured 2026-10-20).
+# Codex 0.164.0 and later ties hook approval to the plugin's files, so this is
+# the run after which it asks the user to trust the hooks again.
 echo ""
 echo "=== C2: re-run on a host that already has ~/.codex ==="
 T="$TMPROOT/c2"; mkdir -p "$T/home/.codex"; make_fakecodex "$T/bin"
 _tx_capture C2 run_plugin_codex "$T/bin" HOME="$T/home"
 assert_exit_zero "C2: exits 0" "$TX_EXIT_C2"
 assert_eq "C2: same three calls" "$(calls_of "$T/bin")" "$EXPECTED_CALLS"
+assert_contains "C2: an update says the hooks need trusting again" "$TX_OUT_C2" "asks again after each universal-memory update"
 
 # ─── C3: UM_PLUGIN_MARKETPLACE names another Git source ──────────────────────
 echo ""

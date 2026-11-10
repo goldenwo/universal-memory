@@ -14,8 +14,12 @@
 # ~/.codex/plugins/universal-memory, a directory Codex never loads.
 #
 # One step stays with the user: Codex runs a plugin's hooks only after they are
-# trusted. Interactive `codex` asks once at startup; `codex exec` never asks and
-# runs none of them until then.
+# trusted. Interactive `codex` asks at startup; `codex exec` never asks and runs
+# none of them until then. Before Codex 0.164.0 that is once per install. From
+# 0.164.0 the approval also covers every file in the installed plugin
+# (openai/codex 2bf2bdf, codex-rs/hooks/src/engine/plugin_fingerprint.rs), so
+# Codex asks again after each update, a version-only one included: the re-run
+# described above is what makes it ask.
 #
 # Usage:
 #   bash installer/install-plugin-codex.sh [--yes]
@@ -84,6 +88,7 @@ _register_plugin() {
   root=$(printf '%s\n' "$out" | sed -n 's/^Installed plugin root: //p' | tail -1)
   ok "Codex plugin installed${root:+ at $root}."
   ok "Next: start codex once and trust the universal-memory hooks when it lists them (\"Trust all and continue\"). Until then Codex runs none of them, and codex exec never asks."
+  ok "Codex 0.164 and later asks again after each universal-memory update: trust them again then."
 }
 
 # An install from the old copy route leaves an MCP-only plugin Codex does not

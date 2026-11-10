@@ -17,8 +17,8 @@ rem
 rem Bytes: bash inherits Codex's stdin, stdout and stderr untouched, with no re-encoding and
 rem no byte-order mark, because nothing here redirects them.
 rem
-rem TRUST: Codex hashes the commandWindows string for hook trust, not this file. Change this
-rem file freely; changing that string makes every Windows user re-approve the hooks. The
+rem TRUST: Codex hashes the commandWindows string for hook trust, and from 0.164.0 every file
+rem in the plugin too, this one included: an edit to either makes users re-approve. The
 rem string assumes a PowerShell or cmd session shell (measured): Git Bash as the session
 rem shell would rewrite its /d /c as paths, and cmd would then read the hook input as commands.
 rem

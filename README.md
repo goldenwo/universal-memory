@@ -126,7 +126,7 @@ codex plugin marketplace add goldenwo/universal-memory
 codex plugin add universal-memory@universal-memory
 ```
 
-Then start `codex` once. It lists the four universal-memory hooks as new: choose **Trust all and continue**, or review them one by one. Codex runs none of them until you do, and `codex exec` never asks. The hooks read the same server settings as Claude Code (`~/.um/endpoint` and `~/.um/auth-token`); on a machine that does not run the server, write them with `bash installer/install.sh --remote <url>`. On Windows, see [Codex on Windows](plugins/claude-code/universal-memory/README.md#codex-on-windows).
+Then start `codex` once. It lists the four universal-memory hooks as new: choose **Trust all and continue**, or review them one by one. Codex runs none of them until you do, and `codex exec` never asks. Codex 0.164 and later asks again after each universal-memory update, because its approval covers every file in the installed plugin: trust them again in `codex` (or the Codex app's hook review), or nothing is captured from that machine, `codex exec` runs included. The hooks read the same server settings as Claude Code (`~/.um/endpoint` and `~/.um/auth-token`); on a machine that does not run the server, write them with `bash installer/install.sh --remote <url>`. On Windows, see [Codex on Windows](plugins/claude-code/universal-memory/README.md#codex-on-windows).
 
 ### Install with an AI agent
 
@@ -192,7 +192,7 @@ The same vault is reachable from every surface below. Capture is automatic where
 | Surface | Capture | Recall | Setup |
 |---|---|---|---|
 | **Claude Code** | Automatic (session hooks) | Automatic (`state.md` injected at session start) | One command |
-| **Codex CLI** | Automatic (the same session hooks) | Automatic (`state.md` injected at session start) | One command, then trust the hooks once |
+| **Codex CLI** | Automatic (the same session hooks) | Automatic (`state.md` injected at session start) | One command, then trust the hooks (Codex 0.164+ asks again after each update) |
 | **claude.ai** (web + mobile) | Say "remember" | On demand, via MCP tools | OAuth connector |
 | **ChatGPT** (Desktop / Custom GPT) | Say "remember" | On demand, via MCP or REST | Connector + tunnel |
 | **Claude Desktop** | Say "remember" | On demand, via MCP tools | Local config, no tunnel |
@@ -284,7 +284,7 @@ cd server
 
 Steps, in order: record the running image → pull → pre-flight → swap → health-verify → auto-rollback on failure. It exits non-zero if the upgrade did not take, and prints the manual revert command either way.
 
-The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), on a Codex host `codex plugin marketplace upgrade universal-memory` and then `codex plugin add universal-memory@universal-memory` (adding again installs the new version), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
+The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), on a Codex host `codex plugin marketplace upgrade universal-memory` and then `codex plugin add universal-memory@universal-memory` (adding again installs the new version; on Codex 0.164 and later, then start `codex` once and trust the hooks again, because they do not run until you do), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
 
 <details>
 <summary><b>Driving compose yourself, and host-specific overrides</b></summary>

@@ -4,17 +4,26 @@
 #
 # Run: bash hooks-json.test.sh
 #
-# Why these pins exist: Codex only runs a hook the user has trusted, and the trust
-# hash covers the handler as Codex normalizes it — event, matcher, the SELECTED
-# command (command on macOS/Linux, commandWindows on Windows), async, timeout,
-# statusMessage, additionalContextLimit (openai/codex codex-rs/hooks/src/engine/
-# discovery.rs, HookHandlerConfig at rust-v0.155.1).
-# Any edit to those fields silently un-trusts the hook for every Codex user on that
-# platform until they re-approve it, and until then Codex runs none of it. Change
-# the scripts or run-hook.cmd instead; neither is part of the hash.
+# Why these pins exist: Codex only runs a hook the user has trusted, and trust has
+# a declaration hash covering the handler as Codex normalizes it — event, matcher,
+# the SELECTED command (command on macOS/Linux, commandWindows on Windows), async,
+# timeout, statusMessage, additionalContextLimit (openai/codex codex-rs/hooks/src/
+# engine/discovery.rs, hook_hash). Any edit to those fields silently un-trusts the
+# hook for every Codex user on that platform until they re-approve it, and until
+# then Codex runs none of it.
+#
+# Before Codex 0.164.0 that hash is the whole approval, so these pins are what
+# lets a release change the scripts or run-hook.cmd without anyone being asked
+# again. From 0.164.0 (openai/codex 2bf2bdf, plugin_fingerprint.rs and
+# plugin_trust.rs in the same directory) the approval also covers a hash of every
+# file in the installed plugin, scripts, tests and plugin.json's version included,
+# so every release re-prompts those users whatever this file holds. The pins still
+# keep the declaration half, and the hook keys Codex stores per-hook settings
+# under (<event>:0:0, which is J1), stable for them.
 #
 #   J1. Exactly the four events, one group and one handler each.
-#   J2. Every hashed field except commandWindows is byte-pinned (macOS/Linux trust).
+#   J2. Every declaration-hashed field except commandWindows is byte-pinned
+#       (macOS/Linux trust).
 #   J3. commandWindows routes the SAME script through run-hook.cmd in the one
 #       pinned form (Windows trust — changing it re-prompts every Windows user).
 #   J4. Every script named exists, and so does run-hook.cmd.

@@ -46,9 +46,10 @@ source "$_UM_API_LIB_DIR/endpoint.sh"
 # surrogateescape). Strict is wanted: one invalid byte then raises into each
 # hook's existing {} fallback instead of reaching Codex as a lone-surrogate
 # escape, which its JSON parser rejects. Keep both lines. Script-only:
-# hooks.json's hashed commandWindows strings are unchanged, so no Windows
-# Codex user re-approves the hooks. The CLI side (lib/frontmatter.sh, which
-# every bin/um-* tool reaches through vault.sh) carries the same two lines.
+# hooks.json's hashed commandWindows strings are unchanged, so Codex before
+# 0.164.0 asks no Windows user to re-approve the hooks (0.164.0 and later asks
+# after any change to the plugin's files). The CLI side (lib/frontmatter.sh,
+# which every bin/um-* tool reaches through vault.sh) carries the same two lines.
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 
