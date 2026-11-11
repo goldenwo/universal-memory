@@ -431,6 +431,87 @@ assert_contains "T6: hook-smoke check passes" "$T6_OUT" "hook-smoke"
 assert_contains "T6: session-end-dry-run check passes" "$T6_OUT" "session-end-dry-run"
 assert_contains "T6: cleanup passes" "$T6_OUT" "cleanup"
 assert_contains "T6: all checks passed message" "$T6_OUT" "All checks passed"
+assert_not_contains "T6: no codex-hooks line when Codex has no universal-memory plugin" "$T6_OUT" "codex-hooks"
+
+# ─── T6c: --verify reports Codex's hook approval, as advice ──────────────────
+# Codex 0.164+ ties its approval to the plugin's files, so an update leaves the
+# hooks unapproved and nothing says so. A Codex home on the server's machine
+# whose stored content hash no longer matches the installed plugin must show as
+# a codex-hooks warning and must not fail the verify (Codex is optional).
+echo ""
+echo "=== T6c: --verify warns when Codex needs the hooks approved again ==="
+T6C="$TMPROOT/t6c"
+mkdir -p "$T6C/vault" "$T6C/plugins" "$T6C/home" "$T6C/codex/plugins/cache/universal-memory/universal-memory/1.8.1/hooks"
+touch "$T6C/home/.bashrc"
+make_fakebin "$T6C/bin" 200
+T6C_SH=$(make_isolated_server "$T6C/server")
+mkdir -p "$T6C/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T6C/plugins/cache/universal-memory/universal-memory/1.8.1"
+printf '{}\n' > "$T6C/codex/plugins/cache/universal-memory/universal-memory/1.8.1/hooks/hooks.json"
+for _t6c_event in session_start user_prompt_submit stop session_end; do
+  printf '[hooks.state."universal-memory@universal-memory:hooks/hooks.json:%s:0:0"]\ntrusted_hash = "sha256:decl"\ntrusted_content_hash = "sha256:an-earlier-version"\n\n' "$_t6c_event"
+done > "$T6C/codex/config.toml"
+
+T6C_EXIT=0
+T6C_OUT=$(env PATH="$T6C/bin:$PATH" \
+  _UM_REPO_ROOT="$REPO_ROOT" \
+  MEM0_MCP_PORT=6335 \
+  UM_VAULT_DIR="$T6C/vault" \
+  UM_OPENAI_API_KEY=sk-testkey12345 \
+  CLAUDE_PLUGINS_DIR="$T6C/plugins" \
+  HOME="$T6C/home" \
+  CODEX_HOME="$T6C/codex" \
+  bash "$T6C_SH" --verify 2>&1) || T6C_EXIT=$?
+
+assert_exit_zero "T6c: --verify still exits 0" "$T6C_EXIT"
+assert_contains "T6c: prints a codex-hooks line" "$T6C_OUT" "codex-hooks"
+assert_contains "T6c: says to trust the hooks again" "$T6C_OUT" "trust them again"
+assert_contains "T6c: all checks passed message" "$T6C_OUT" "All checks passed"
+
+# ─── T6d: a failing approval check cannot abort or fail the verify ───────────
+# install.sh runs under `set -euo pipefail`. A `py` ahead on PATH works for
+# everything else and exits 1 for the approval check: the verify must finish,
+# pass, and say it could not tell.
+echo ""
+echo "=== T6d: --verify survives a failing Codex approval check ==="
+T6D_REAL_PY=""
+for _t6d_c in python3 python; do
+  if command -v "$_t6d_c" >/dev/null 2>&1 && "$_t6d_c" -c '' >/dev/null 2>&1; then
+    T6D_REAL_PY=$(command -v "$_t6d_c")
+    break
+  fi
+done
+if [ -z "$T6D_REAL_PY" ]; then
+  pass "T6d: skipped (no python3 or python to stand behind the failing py)"
+else
+  T6D="$TMPROOT/t6d"
+  mkdir -p "$T6D/vault" "$T6D/plugins" "$T6D/home"
+  touch "$T6D/home/.bashrc"
+  make_fakebin "$T6D/bin" 200
+  T6D_SH=$(make_isolated_server "$T6D/server")
+  mkdir -p "$T6D/plugins/cache/universal-memory/universal-memory" && cp -r "$PLUGIN_SRC" "$T6D/plugins/cache/universal-memory/universal-memory/1.8.1"
+  cat > "$T6D/bin/py" <<FAKEPY
+#!/usr/bin/env bash
+case "\$*" in *codex_hook_approval.py*) echo "Traceback (most recent call last):" >&2; exit 1 ;; esac
+exec "$T6D_REAL_PY" "\$@"
+FAKEPY
+  chmod +x "$T6D/bin/py"
+
+  T6D_EXIT=0
+  T6D_OUT=$(env PATH="$T6D/bin:$PATH" \
+    _UM_REPO_ROOT="$REPO_ROOT" \
+    MEM0_MCP_PORT=6335 \
+    UM_VAULT_DIR="$T6D/vault" \
+    UM_OPENAI_API_KEY=sk-testkey12345 \
+    CLAUDE_PLUGINS_DIR="$T6D/plugins" \
+    HOME="$T6D/home" \
+    CODEX_HOME="$T6C/codex" \
+    bash "$T6D_SH" --verify 2>&1) || T6D_EXIT=$?
+
+  assert_exit_zero "T6d: --verify exits 0" "$T6D_EXIT"
+  assert_contains "T6d: the codex-hooks line says it could not tell" "$T6D_OUT" "Could not tell"
+  assert_not_contains "T6d: and does not claim a state" "$T6D_OUT" "trust them again"
+  assert_contains "T6d: all checks passed message" "$T6D_OUT" "All checks passed"
+fi
 
 # ─── T6b: --verify fails with flag-naming hint when server has writes disabled ─
 echo ""
