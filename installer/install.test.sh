@@ -216,6 +216,85 @@ else
 fi
 rm -rf "$TC4"
 
+# ─── T-AGY-1..5: the Antigravity plugin flag (#410) ──────────────────────────
+# Every case sets HOME and LOCALAPPDATA to temp folders: on a Windows machine
+# with Antigravity installed the real agy.exe sits under the real
+# %LOCALAPPDATA%. These are dry runs, so nothing is delegated for real.
+delegates_of() { printf '%s\n' "$1" | grep -o 'delegate: [^ ]*' | sort | tr '\n' ' ' || true; }
+
+echo ""
+echo "=== T-AGY-1: --plugin-antigravity alone → only the Antigravity installer ==="
+# The flag has to be named at every place install.sh lists the component flags.
+# Left out of the mode selection, the flag alone would look like no flag at all:
+# the wizard on a terminal, or a full install with the server here.
+TA1=$(mktemp -d)
+make_stubs "$TA1/bin"
+printf '#!/bin/sh\nexit 0\n' > "$TA1/bin/agy"; chmod +x "$TA1/bin/agy"
+_tx_capture TA1 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA1/repo" \
+  PATH="$TA1/bin:/usr/bin:/bin" HOME="$TA1/fakehome" LOCALAPPDATA="$TA1/localappdata" \
+  bash "$INSTALLER" --plugin-antigravity
+if [ "$TX_EXIT_TA1" -eq 0 ]; then pass "T-AGY-1: exit 0"; else fail "T-AGY-1: exit $TX_EXIT_TA1 (out: $TX_OUT_TA1)"; fi
+if [ "$(delegates_of "$TX_OUT_TA1")" = "delegate: installer/install-plugin-antigravity.sh " ]; then pass "T-AGY-1: the only delegate is install-plugin-antigravity.sh (no server, no CLI, no other plugin)"; else fail "T-AGY-1: delegates were: $(delegates_of "$TX_OUT_TA1")"; fi
+if ! echo "$TX_OUT_TA1" | grep -q "Detected environment"; then pass "T-AGY-1: the wizard did not open"; else fail "T-AGY-1: the wizard opened"; fi
+rm -rf "$TA1"
+
+echo ""
+echo "=== T-AGY-2: Antigravity's data folder without agy on PATH → still delegated ==="
+TA2=$(mktemp -d)
+make_stubs "$TA2/bin"
+mkdir -p "$TA2/fakehome/.gemini/antigravity-cli"
+_tx_capture TA2 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA2/repo" \
+  PATH="$TA2/bin:/usr/bin:/bin" HOME="$TA2/fakehome" LOCALAPPDATA="$TA2/localappdata" \
+  bash "$INSTALLER" --plugin-antigravity
+if echo "$TX_OUT_TA2" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "T-AGY-2: delegated"; else fail "T-AGY-2: not delegated (got: $TX_OUT_TA2)"; fi
+rm -rf "$TA2"
+
+echo ""
+echo "=== T-AGY-3: no Antigravity → soft-skip; ~/.gemini alone does not count ==="
+TA3=$(mktemp -d)
+make_stubs "$TA3/bin"
+mkdir -p "$TA3/fakehome/.gemini"
+_tx_capture TA3 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA3/repo" \
+  PATH="$TA3/bin:/usr/bin:/bin" HOME="$TA3/fakehome" LOCALAPPDATA="$TA3/localappdata" \
+  bash "$INSTALLER" --plugin-antigravity
+if [ "$TX_EXIT_TA3" -eq 0 ]; then pass "T-AGY-3: exit 0 (soft-skip)"; else fail "T-AGY-3: exit $TX_EXIT_TA3 (out: $TX_OUT_TA3)"; fi
+if echo "$TX_OUT_TA3" | grep -q "soft-skipping Antigravity plugin"; then pass "T-AGY-3: soft-skip message printed"; else fail "T-AGY-3: expected soft-skip message (got: $TX_OUT_TA3)"; fi
+if [ -z "$(delegates_of "$TX_OUT_TA3")" ]; then pass "T-AGY-3: nothing delegated"; else fail "T-AGY-3: delegates were: $(delegates_of "$TX_OUT_TA3")"; fi
+rm -rf "$TA3"
+
+echo ""
+echo "=== T-AGY-4: --all includes Antigravity when it is present, not otherwise ==="
+TA4=$(mktemp -d)
+make_stubs "$TA4/bin"
+_tx_capture TA4N env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA4/repo" \
+  PATH="$TA4/bin:/usr/bin:/bin" HOME="$TA4/fakehome" LOCALAPPDATA="$TA4/localappdata" \
+  bash "$INSTALLER" --all
+if ! echo "$TX_OUT_TA4N" | grep -q "install-plugin-antigravity.sh"; then pass "T-AGY-4: --all without Antigravity does not delegate it"; else fail "T-AGY-4: delegated without Antigravity (got: $TX_OUT_TA4N)"; fi
+if ! echo "$TX_OUT_TA4N" | grep -q "soft-skipping Antigravity"; then pass "T-AGY-4: --all without Antigravity says nothing about it"; else fail "T-AGY-4: soft-skip noise on --all"; fi
+printf '#!/bin/sh\nexit 0\n' > "$TA4/bin/agy"; chmod +x "$TA4/bin/agy"
+_tx_capture TA4Y env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA4/repo" \
+  PATH="$TA4/bin:/usr/bin:/bin" HOME="$TA4/fakehome" LOCALAPPDATA="$TA4/localappdata" \
+  bash "$INSTALLER" --all
+if echo "$TX_OUT_TA4Y" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "T-AGY-4: --all with an agy CLI delegates it"; else fail "T-AGY-4: not delegated (got: $TX_OUT_TA4Y)"; fi
+if echo "$TX_OUT_TA4Y" | grep -q "delegate: server/install.sh"; then pass "T-AGY-4: --all still installs the server"; else fail "T-AGY-4: server missing from --all"; fi
+# No flags and no terminal is the same full install.
+_tx_capture TA4D env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA4/repo" \
+  PATH="$TA4/bin:/usr/bin:/bin" HOME="$TA4/fakehome" LOCALAPPDATA="$TA4/localappdata" \
+  bash "$INSTALLER"
+if echo "$TX_OUT_TA4D" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "T-AGY-4: a default run with an agy CLI delegates it"; else fail "T-AGY-4: default run did not delegate (got: $TX_OUT_TA4D)"; fi
+rm -rf "$TA4"
+
+echo ""
+echo "=== T-AGY-5: the wizard detects Antigravity by its CLI ==="
+TA5=$(mktemp -d)
+make_stubs "$TA5/bin"
+printf '#!/bin/sh\nexit 0\n' > "$TA5/bin/agy"; chmod +x "$TA5/bin/agy"
+_tx_capture TA5 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA5/repo" \
+  PATH="$TA5/bin:/usr/bin:/bin" HOME="$TA5/fakehome" LOCALAPPDATA="$TA5/localappdata" \
+  bash "$INSTALLER" --interactive
+if echo "$TX_OUT_TA5" | grep -q "✓ Antigravity (agy CLI)"; then pass "T-AGY-5: wizard reports Antigravity detected"; else fail "T-AGY-5: wizard did not detect Antigravity (got: $TX_OUT_TA5)"; fi
+rm -rf "$TA5"
+
 # ─── T-FLAGS-7: --plugin-cc + --cli → two delegations ───────────────────────
 echo ""
 echo "=== T-FLAGS-7: --plugin-cc + --cli → both install-plugin-cc.sh + install-cli.sh ==="

@@ -63,12 +63,28 @@ if echo "$OUT" | grep -q "delegate: server/install.sh"; then pass "T5: wizard op
 else fail "T5: wizard option 4 did not trigger server install; out: $(echo "$OUT" | head -20)"; fi
 
 # T6: Wizard option 5 (Custom) — server + cli, decline plugins
-# Input: 5 (component menu) + Y (server) + n (cc) + n (codex) + Y (cli) + blank (vault) + 4 (skip provider) + Y (proceed)
+# Input: 5 (component menu) + Y (server) + n (cc) + n (codex) + n (antigravity) + Y (cli) + blank (vault) + 4 (skip provider) + Y (proceed)
 T6=$(mktemp_in "$TMPROOT")
-OUT=$(printf '5\nY\nn\nn\nY\n\n4\nY\n' | HOME="$T6" UM_DRY_RUN=1 bash "$INSTALL" --interactive --dry-run 2>&1 || true)
+OUT=$(printf '5\nY\nn\nn\nn\nY\n\n4\nY\n' | HOME="$T6" UM_DRY_RUN=1 bash "$INSTALL" --interactive --dry-run 2>&1 || true)
 if echo "$OUT" | grep -q "delegate: server/install.sh" && echo "$OUT" | grep -q "delegate: installer/install-cli.sh"; then
   pass "T6: custom → server + cli both fire"
 else fail "T6: custom did not fire both delegates; out: $(echo "$OUT" | head -25)"; fi
+if ! echo "$OUT" | grep -q "install-plugin-antigravity.sh"; then pass "T6: custom → a declined Antigravity plugin is not installed"
+else fail "T6: Antigravity delegated after 'n'; out: $(echo "$OUT" | head -25)"; fi
+
+# T6b: Custom — accept only the Antigravity plugin (#410). HOME holds its data
+# folder, so it counts as present whatever this machine has on PATH.
+# Input: 5 + n (server) + n (cc) + n (codex) + Y (antigravity) + n (cli) + blank (vault) + 4 (skip provider) + Y (proceed)
+T6B=$(mktemp_in "$TMPROOT")
+mkdir -p "$T6B/.gemini/antigravity-cli"
+OUT=$(printf '5\nn\nn\nn\nY\nn\n\n4\nY\n' | HOME="$T6B" LOCALAPPDATA="$T6B/localappdata" UM_DRY_RUN=1 bash "$INSTALL" --interactive --dry-run 2>&1 || true)
+if echo "$OUT" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "T6b: custom → Antigravity plugin delegate fires"
+else fail "T6b: custom did not fire the Antigravity delegate; out: $(echo "$OUT" | head -25)"; fi
+if echo "$OUT" | grep -q "  - Antigravity plugin"; then pass "T6b: the summary lists the Antigravity plugin"
+else fail "T6b: summary line missing; out: $(echo "$OUT" | head -25)"; fi
+# This suite does not hide the machine's PATH, so either detection line is right.
+if echo "$OUT" | grep -q "✓ Antigravity (agy CLI)\|✓ ~/.gemini/antigravity-cli (Antigravity"; then pass "T6b: the wizard reports Antigravity detected"
+else fail "T6b: detection line missing; out: $(echo "$OUT" | head -25)"; fi
 
 # T7: Decline proceed — should abort with "Aborted."
 # Input: 1 (component menu) + blank (vault) + 4 (skip provider) + n (decline proceed)

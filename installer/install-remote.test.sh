@@ -352,6 +352,20 @@ run_remote "$T" -- --remote http://localhost:6335 --yes
 if [ "$(cat "$T/home/.um/auth-token" 2>/dev/null)" = "old-token" ]; then pass "RT11b: pre-existing auth-token preserved on empty-token run"; else fail "RT11b: auth-token clobbered"; fi
 rm -rf "$T"
 
+# ─── RT12: --remote with the Antigravity plugin flag goes on to the plugin ───
+# The remote-only early exit lists every component flag; a flag missing from
+# it would end the run after the remote flow and install nothing (#410).
+echo ""
+echo "=== RT12: --remote URL --plugin-antigravity → remote flow, then the plugin ==="
+T=$(mktemp -d)
+mkdir -p "$T/bin" "$T/home/.gemini/antigravity-cli"
+run_remote "$T" UM_DRY_RUN=1 LOCALAPPDATA="$T/localappdata" -- --remote http://pi:6337 --yes --plugin-antigravity
+if [ "$RT_RC" -eq 0 ]; then pass "RT12: exit 0"; else fail "RT12: exit $RT_RC (out: $RT_OUT)"; fi
+if echo "$RT_OUT" | grep -q "would: verify remote endpoint"; then pass "RT12: the remote flow ran first (a dry run, so it only says what it would do)"; else fail "RT12: the remote flow did not run (out: $RT_OUT)"; fi
+if echo "$RT_OUT" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "RT12: the Antigravity installer is delegated"; else fail "RT12: not delegated (out: $RT_OUT)"; fi
+if ! echo "$RT_OUT" | grep -q "delegate: server/install.sh"; then pass "RT12: no server install"; else fail "RT12: the server was delegated"; fi
+rm -rf "$T"
+
 # ─── Summary ─────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

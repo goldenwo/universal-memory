@@ -12,6 +12,7 @@
 #   --server        Install/start the memory server (Docker stack)
 #   --plugin-cc     Install the Claude Code plugin (through Claude Code's marketplace)
 #   --plugin-codex  Install the Codex CLI plugin (through Codex's marketplace)
+#   --plugin-antigravity  Install the Antigravity plugin (through `agy plugin install`)
 #   --cli           Install the um CLI tool
 #   --all           Install all detected components (default when no flags + non-TTY)
 #   --interactive   Launch the interactive wizard
@@ -82,6 +83,7 @@ DRY_RUN="${UM_DRY_RUN:-0}"
 INSTALL_SERVER=0
 INSTALL_PLUGIN_CC=0
 INSTALL_PLUGIN_CODEX=0
+INSTALL_PLUGIN_ANTIGRAVITY=0
 INSTALL_CLI=0
 INSTALL_ALL=0
 FORCE_WIZARD=0
@@ -101,6 +103,7 @@ while [[ $# -gt 0 ]]; do
     --server)        INSTALL_SERVER=1 ;;
     --plugin-cc)     INSTALL_PLUGIN_CC=1 ;;
     --plugin-codex)  INSTALL_PLUGIN_CODEX=1 ;;
+    --plugin-antigravity) INSTALL_PLUGIN_ANTIGRAVITY=1 ;;
     --cli)           INSTALL_CLI=1 ;;
     --all)           INSTALL_ALL=1 ;;
     --yes|-y)        ASSUME_YES=1; COMMON_ARGS+=("$1") ;;
@@ -135,6 +138,7 @@ Component flags:
   --server          Install the memory server (Docker stack)
   --plugin-cc       Install the Claude Code plugin
   --plugin-codex    Install the Codex CLI plugin (skipped if Codex is absent)
+  --plugin-antigravity  Install the Antigravity plugin (skipped if Antigravity is absent)
   --cli             Install the um CLI tool
   --all             Install all detected components
 
@@ -293,7 +297,7 @@ if [[ $REMOTE_MODE -eq 1 ]]; then
   run_remote_flow
   # Remote-only invocation: done. With component flags, fall through so e.g.
   # `--remote URL --plugin-cc` also installs the plugin against that server.
-  if [[ $INSTALL_SERVER -eq 0 && $INSTALL_PLUGIN_CC -eq 0 && $INSTALL_PLUGIN_CODEX -eq 0 && $INSTALL_CLI -eq 0 && $INSTALL_ALL -eq 0 && $FORCE_WIZARD -eq 0 ]]; then
+  if [[ $INSTALL_SERVER -eq 0 && $INSTALL_PLUGIN_CC -eq 0 && $INSTALL_PLUGIN_CODEX -eq 0 && $INSTALL_PLUGIN_ANTIGRAVITY -eq 0 && $INSTALL_CLI -eq 0 && $INSTALL_ALL -eq 0 && $FORCE_WIZARD -eq 0 ]]; then
     exit 0
   fi
 fi
@@ -305,6 +309,14 @@ _codex_present() {
   command -v codex >/dev/null 2>&1 || [[ -d "${CODEX_HOME:-${HOME:-}/.codex}" ]]
 }
 
+# Antigravity counts as present with its CLI on PATH, or with its data folder
+# alone: on Windows `agy` is usually not on Git Bash's PATH, and
+# install-plugin-antigravity.sh finds it under %LOCALAPPDATA% or prints the
+# commands. Nothing else counts (~/.gemini alone is the Gemini CLI's too).
+_antigravity_present() {
+  command -v agy >/dev/null 2>&1 || [[ -d "${HOME:-}/.gemini/antigravity-cli" ]]
+}
+
 # ─── Prerequisites check ──────────────────────────────────────────────────────
 # Determine which tools are actually needed based on what we're installing. The
 # wizard calls this as soon as the components are chosen, so a missing tool stops
@@ -312,8 +324,8 @@ _codex_present() {
 check_prereqs() {
   local need_git=0 need_docker=0 need_python3=0
   # Server and plugins need git (for the installer's own checkout); only the server
-  # runs Docker. The plugins install through the claude and codex CLIs.
-  [[ $INSTALL_SERVER -eq 1 || $INSTALL_PLUGIN_CC -eq 1 || $INSTALL_PLUGIN_CODEX -eq 1 ]] && need_git=1
+  # runs Docker. The plugins install through the claude, codex and agy CLIs.
+  [[ $INSTALL_SERVER -eq 1 || $INSTALL_PLUGIN_CC -eq 1 || $INSTALL_PLUGIN_CODEX -eq 1 || $INSTALL_PLUGIN_ANTIGRAVITY -eq 1 ]] && need_git=1
   [[ $INSTALL_SERVER -eq 1 ]] && need_docker=1
   # The CLI and server/install.sh both run python3 with PyYAML (server/install.sh
   # refuses to continue without it).
@@ -388,7 +400,7 @@ _um_capture_default() {
 # Mode selection
 if [[ $FORCE_WIZARD -eq 1 ]]; then
   MODE=wizard
-elif [[ $INSTALL_SERVER -eq 0 && $INSTALL_PLUGIN_CC -eq 0 && $INSTALL_PLUGIN_CODEX -eq 0 && $INSTALL_CLI -eq 0 && $INSTALL_ALL -eq 0 ]]; then
+elif [[ $INSTALL_SERVER -eq 0 && $INSTALL_PLUGIN_CC -eq 0 && $INSTALL_PLUGIN_CODEX -eq 0 && $INSTALL_PLUGIN_ANTIGRAVITY -eq 0 && $INSTALL_CLI -eq 0 && $INSTALL_ALL -eq 0 ]]; then
   if [[ -t 0 && $ASSUME_YES -eq 0 ]]; then
     MODE=wizard
   else
@@ -420,6 +432,7 @@ if [[ $MODE == wizard ]]; then
         INSTALL_SERVER=$DETECTED_DOCKER
         INSTALL_PLUGIN_CC=$DETECTED_CC
         INSTALL_PLUGIN_CODEX=$DETECTED_CODEX
+        INSTALL_PLUGIN_ANTIGRAVITY=$DETECTED_ANTIGRAVITY
         INSTALL_CLI=1
         [[ $DETECTED_DOCKER -eq 0 ]] && echo "[wizard] WARNING: Docker not detected — 'Everything' choice skips server install. Install Docker and re-run, or choose 4 (Just server) after installing Docker." >&2
         ;;
@@ -432,6 +445,7 @@ if [[ $MODE == wizard ]]; then
         wizard_confirm "Install server stack?" && INSTALL_SERVER=1
         wizard_confirm "Install Claude Code plugin?" && INSTALL_PLUGIN_CC=1
         wizard_confirm "Install Codex plugin?" && INSTALL_PLUGIN_CODEX=1
+        wizard_confirm "Install Antigravity plugin?" && INSTALL_PLUGIN_ANTIGRAVITY=1
         wizard_confirm "Install um CLI?" && INSTALL_CLI=1
         ;;
   esac
@@ -458,6 +472,7 @@ if [[ $INSTALL_ALL -eq 1 ]]; then
   INSTALL_SERVER=1
   command -v claude >/dev/null 2>&1 && INSTALL_PLUGIN_CC=1  # the plugin installs through the claude CLI
   _codex_present && INSTALL_PLUGIN_CODEX=1
+  _antigravity_present && INSTALL_PLUGIN_ANTIGRAVITY=1
   INSTALL_CLI=1
 fi
 
@@ -592,6 +607,13 @@ if [[ $INSTALL_PLUGIN_CODEX -eq 1 ]]; then
     echo "[install] Codex not found (no codex CLI, no ~/.codex) — soft-skipping Codex plugin" >&2
   else
     _delegate "installer/install-plugin-codex.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
+  fi
+fi
+if [[ $INSTALL_PLUGIN_ANTIGRAVITY -eq 1 ]]; then
+  if ! _antigravity_present; then
+    echo "[install] Antigravity not found (no agy CLI, no ~/.gemini/antigravity-cli) — soft-skipping Antigravity plugin" >&2
+  else
+    _delegate "installer/install-plugin-antigravity.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
   fi
 fi
 if [[ $INSTALL_CLI -eq 1 ]]; then
