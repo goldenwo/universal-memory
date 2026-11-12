@@ -123,8 +123,10 @@ for bad in '{"conversationId":"c1"}' '{"conversationId":"c1","workspacePaths":[]
 done
 
 echo "=== G4: extra fields, odd ids ==="
+# shellcheck disable=SC2016  # the id is literal text, never expanded
 translate '{"conversationId":"../odd id;$(x)","workspacePaths":["/home/u/p"],"stop_hook_active":true,"prompt":"smuggled","cwd":"/smuggled","model":"m"}'
 assert_eq "G4: rc 0" "$RC" "0"
+# shellcheck disable=SC2016
 assert_eq "G4: odd conversationId passes through" "$(field "$OUT" session_id)" '../odd id;$(x)'
 assert_eq "G4: cwd comes from workspacePaths only" "$(field "$OUT" cwd)" "/home/u/p"
 assert_eq "G4: nothing else is copied" "$(keys "$OUT")" "cwd,session_id"

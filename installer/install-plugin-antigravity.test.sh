@@ -37,10 +37,6 @@ assert_contains() {
   local name="$1" haystack="$2" needle="$3"
   if [[ "$haystack" == *"$needle"* ]]; then pass "$name"; else fail_test "$name" "expected to contain '$needle'"; fi
 }
-assert_not_contains() {
-  local name="$1" haystack="$2" needle="$3"
-  if [[ "$haystack" != *"$needle"* ]]; then pass "$name"; else fail_test "$name" "should NOT contain '$needle'"; fi
-}
 assert_exit_zero() {
   local name="$1" code="$2"
   if [ "$code" -eq 0 ]; then pass "$name"; else fail_test "$name" "exit code $code (expected 0)"; fi

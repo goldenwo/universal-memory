@@ -91,7 +91,7 @@ assert_eq "K1: one group, universal-memory" "$(printf '%s\n' "$ROWS" | cut -d"$S
 assert_eq "K1: the events are SessionStart and Stop, handler 0 each" \
   "$(printf '%s\n' "$ROWS" | cut -d"$SEP" -f2,3 | tr "$SEP" ':' | sort | tr '\n' ' ')" "SessionStart:0 Stop:0 "
 
-while IFS="$SEP" read -r group event index type timeout flags cmd; do
+while IFS="$SEP" read -r _ event _ type timeout flags cmd; do
   [ -n "$event" ] || continue
   case "$event" in
     SessionStart) script="agy-session-start.sh"; want_timeout="60" ;;

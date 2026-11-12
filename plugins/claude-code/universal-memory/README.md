@@ -38,6 +38,10 @@ Codex CLI installs this same plugin from the same marketplace:
 them: at first install and, on Codex 0.164 and later, after each update. See
 [Codex hook approval](#codex-hook-approval).
 
+Antigravity's CLI loads this same folder too, through `.antigravity-plugin/plugin.json` and
+the `hooks.json` at the plugin root: `bash installer/install.sh --plugin-antigravity` from a
+repo checkout. See [Antigravity](#antigravity).
+
 ## First run: `/um-setup`
 
 A fresh install ships hooks but no config. Run **`/um-setup`** once (or
@@ -125,6 +129,38 @@ What makes Codex ask again depends on its version:
 - **0.164.0 and later**: that, or a change to any file in the installed plugin. Every
   universal-memory update changes at least the version number, so Codex asks again after each
   update, on every platform.
+
+### Antigravity
+
+Antigravity reads the `hooks.json` at the plugin root, not `hooks/hooks.json` (which Claude Code
+and Codex read and Antigravity ignores). Tested on the Antigravity CLI, agy 1.5.3, on Windows;
+macOS, Linux, and the Antigravity app and IDE are untested.
+
+| Antigravity event | Script | What it does |
+|---|---|---|
+| **SessionStart** | `agy-session-start.sh` | Fires at the first prompt of a conversation and carries that prompt. Runs `session-start.sh`, then `user-prompt-submit.sh`, and returns both results as one injected message |
+| **Stop** | `agy-stop.sh` | Fires after every turn. Runs `stop.sh`, which reads Antigravity's transcript as a third format beside Claude Code's and Codex's |
+
+The two `agy-` scripts only translate Antigravity's hook input and output (`lib/agy.sh`); the
+capture and recall logic is the one the other hosts run. What differs:
+
+- **No session-end event.** The end-of-session summary and the `state.md` update come from the
+  server's idle sweep, hourly, for sessions idle six hours or more. Turns are captured at once.
+- **`SessionStart` is not fired again when a conversation is resumed**, so a resumed conversation
+  gets no fresh state injection; its turns are still captured.
+- **Windows.** Antigravity runs a hook through `cmd`, from the installed plugin's folder, so the
+  command is `hooks\run-hook.cmd <script>` and needs Git for Windows, as under Codex. A double
+  quote anywhere in a hook command breaks it there.
+- **Failures are silent in the session.** Antigravity logs a failed hook to
+  `~/.gemini/antigravity-cli/cli.log` (search for `jsonhook__universal-memory`). The hooks log
+  their own line per run to `~/.um/hook.log`: `agy-session-start ok sid=<conversation>` and
+  `agy-stop ok sid=<conversation>`, next to the usual lines of the scripts they run.
+- **Antigravity keeps a copy.** `agy plugin install` copies this folder to
+  `~/.gemini/config/plugins/universal-memory`, so run the installer again after an update.
+  `agy plugin uninstall universal-memory` removes it.
+- **Slash commands.** Antigravity does not load this plugin's `commands/`, so `/um-setup`,
+  `/um-checkpoint` and `/um-preview` do not exist there. The skills load as
+  `/universal-memory:create-adr` and `/universal-memory:create-remember`.
 
 ## The `um` CLI
 
