@@ -126,7 +126,7 @@ codex plugin marketplace add goldenwo/universal-memory
 codex plugin add universal-memory@universal-memory
 ```
 
-Then start `codex` once. It lists the four universal-memory hooks as new: choose **Trust all and continue**, or review them one by one. Codex runs none of them until you do, and `codex exec` never asks. Codex 0.164 and later asks again after each universal-memory update, because its approval covers every file in the installed plugin: trust them again in `codex` (or the Codex app's hook review), or nothing is captured from that machine, `codex exec` runs included. The hooks read the same server settings as Claude Code (`~/.um/endpoint` and `~/.um/auth-token`); on a machine that does not run the server, write them with `bash installer/install.sh --remote <url>`. On Windows, see [Codex on Windows](plugins/claude-code/universal-memory/README.md#codex-on-windows).
+Then start `codex` once. It lists the four universal-memory hooks as new: choose **Trust all and continue**, or review them one by one. Codex runs none of them until you do, and `codex exec` never asks. Codex 0.164 and later asks again after each universal-memory update, because its approval covers every file in the installed plugin: trust them again in `codex` (or the Codex app's hook review), or nothing is captured from that machine, `codex exec` runs included. The installer's closing line says whether Codex currently has them approved, and so does `bash server/install.sh --verify` when Codex is on the server's machine. The hooks read the same server settings as Claude Code (`~/.um/endpoint` and `~/.um/auth-token`); on a machine that does not run the server, write them with `bash installer/install.sh --remote <url>`. On Windows, see [Codex on Windows](plugins/claude-code/universal-memory/README.md#codex-on-windows).
 
 ### Install with an AI agent
 
@@ -284,7 +284,7 @@ cd server
 
 Steps, in order: record the running image → pull → pre-flight → swap → health-verify → auto-rollback on failure. It exits non-zero if the upgrade did not take, and prints the manual revert command either way.
 
-The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), on a Codex host `codex plugin marketplace upgrade universal-memory` and then `codex plugin add universal-memory@universal-memory` (adding again installs the new version; on Codex 0.164 and later, then start `codex` once and trust the hooks again, because they do not run until you do), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
+The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), on a Codex host `bash installer/install.sh --plugin-codex` from this checkout (it upgrades the marketplace, installs the new version and says whether Codex needs the hooks trusted again; by hand that is `codex plugin marketplace upgrade universal-memory` and then `codex plugin add universal-memory@universal-memory`, after which, on Codex 0.164 and later, you start `codex` once and trust the hooks again, because they do not run until you do), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
 
 <details>
 <summary><b>Driving compose yourself, and host-specific overrides</b></summary>
@@ -314,6 +314,7 @@ Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X
 ## If something breaks
 
 - `bash server/install.sh --verify` — reports all three surface versions and flags skew; the fastest first check.
+- `bash installer/install-plugin-codex.sh --check` — on a machine with Codex, says whether Codex still has the hooks approved (it stops running them after each update until you trust them again). The same answer appears as `codex-hooks` in `--verify`. If it still warns right after you trusted them, Codex has changed how it checks: open an issue.
 - `curl http://localhost:6335/health` — the server's liveness answer (`{"ok":true,...}`).
 - `docker compose logs -f` from `server/` — the server logs structured JSON; errors are self-describing.
 - Still stuck? [Open an issue](https://github.com/goldenwo/universal-memory/issues) with the log lines and your `--verify` output.

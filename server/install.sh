@@ -694,6 +694,29 @@ print(json.dumps({
     _vwarn "version-skew" "um CLI $_CLI_VER is BEHIND this source tree ($_PLUGIN_SRC_VER) — scripts added since $_CLI_VER are missing. Refresh: bash installer/install-cli.sh --no-path"
   fi
 
+  # ── codex-hooks ───────────────────────────────────────────────────────────
+  # Only when Codex on THIS machine has the plugin. Codex runs a plugin's hooks
+  # only while the user's approval matches, and from 0.164 that approval covers
+  # every file in the plugin, so each update leaves them unapproved: nothing is
+  # captured from Codex and nothing says so. Advisory by design: Codex is an
+  # optional surface, so this never sets _verify_fail, and the helper turns a
+  # failing or missing check into "unknown" so it cannot abort this script.
+  # It reads Codex's files and runs no codex command.
+  _CODEX_HOME_DIR="${CODEX_HOME:-${HOME:+$HOME/.codex}}"
+  _CODEX_HOOKS_LIB="$REPO_ROOT/installer/lib/codex-hook-approval.sh"
+  if [ -n "$_CODEX_HOME_DIR" ] && [ -d "$_CODEX_HOME_DIR/plugins/cache/universal-memory/universal-memory" ] \
+     && [ -f "$_CODEX_HOOKS_LIB" ]; then
+    # shellcheck source=../installer/lib/codex-hook-approval.sh
+    source "$_CODEX_HOOKS_LIB"
+    um_codex_hook_approval "$_CODEX_HOME_DIR" "${_VERIFY_PY:-}"
+    case "$UM_CODEX_HOOKS_STATE" in
+      approved) _vpass "codex-hooks" "$UM_CODEX_HOOKS_MESSAGE" ;;
+      never-approved|needs-approval) _vwarn "codex-hooks" "$UM_CODEX_HOOKS_MESSAGE" ;;
+      not-installed) ;;
+      *) _vinfo "codex-hooks" "$UM_CODEX_HOOKS_MESSAGE" ;;
+    esac
+  fi
+
   echo ""
   if [ "$_verify_fail" -eq 0 ]; then
     echo "All checks passed. Restart Claude Code to activate hooks."
