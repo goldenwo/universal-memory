@@ -8,10 +8,12 @@
 # version did TRANSCRIPT=$(cat) and therefore never captured anything.)
 #
 # Behavior (all pinned by spec §5):
-#   - Two transcript dialects, ONE parser: Claude Code's transcript JSONL and
+#   - Three transcript dialects, ONE parser: Claude Code's transcript JSONL,
 #     Codex CLI's rollout JSONL (transcript_path is the rollout under Codex;
 #     its response_item/message records map to the same role/text tuple —
-#     2026-09-07, S29/S30). Everything after the parser is shared.
+#     2026-09-07, S29/S30) and Antigravity CLI's transcript_full.jsonl
+#     (2026-11-09, S32-S35; reached through agy-stop.sh, which translates
+#     Antigravity's hook input). Everything after the parser is shared.
 #   - Delta cursor at ~/.um/state/stop-cursor-<session_id> (raw transcript
 #     line number already captured). session_id validated ^[A-Za-z0-9._-]+$
 #     before ANY path use. Cursor absent/unreadable ⇒ bounded trailing window
@@ -269,6 +271,25 @@ def nontext_turn(records):
             replied = True
     return injected and replied
 
+# Antigravity wraps what the user typed in a <USER_REQUEST> block and appends
+# client-added blocks after it. The closing tag that counts is the FIRST one
+# followed by <ADDITIONAL_METADATA> or by the end of the content, never the
+# last: a skill the user invokes is embedded whole inside the metadata block
+# (measured 2026-11-09), and a skill body with a closing-tag line would
+# otherwise be stored as the user`s words. With no such tag (an unknown
+# trailer), cut at the first closing tag: losing text is the safer error.
+def agy_user_text(content):
+    lines = content.split("\n")
+    if lines[0].strip() != "<USER_REQUEST>":
+        return content.strip()
+    closes = [i for i in range(1, len(lines)) if lines[i].strip() == "</USER_REQUEST>"]
+    for i in closes:
+        rest = [r.strip() for r in lines[i + 1:] if r.strip()]
+        if not rest or rest[0] == "<ADDITIONAL_METADATA>":
+            return "\n".join(lines[1:i]).strip()
+    end = closes[0] if closes else len(lines)
+    return "\n".join(lines[1:end]).strip()
+
 msgs = []   # (lineno, role, text, timestamp)
 tail = []   # records past the cursor, for nontext_turn
 total = 0
@@ -290,6 +311,29 @@ with fh:
         # (fixture line 11: model "<synthetic>", isApiErrorMessage) — not
         # conversation; skip. Spec §5 is silent, so conservative-skip.
         if e.get("isApiErrorMessage"):
+            continue
+        # Antigravity CLI: transcript_path is transcript_full.jsonl, whose
+        # records carry step_index and source (agy 1.5.3, measured
+        # 2026-11-09; S32-S35). A user turn is USER_INPUT from USER_EXPLICIT;
+        # a reply is a PLANNER_RESPONSE from MODEL with text. Everything else
+        # is not conversation: SYSTEM_MESSAGE holds what hooks injected (the
+        # state this plugin put there), GENERIC holds tool results (an MCP
+        # memory search result in full, which would feed the vault its own
+        # output), and a planner step with no text is a tool call. status is
+        # not read: every measured record was DONE.
+        if "step_index" in e and "source" in e:
+            c = e.get("content")
+            if not isinstance(c, str):
+                continue
+            kind = (e.get("type"), e.get("source"))
+            if kind == ("USER_INPUT", "USER_EXPLICIT"):
+                role, text = "user", agy_user_text(c)
+            elif kind == ("PLANNER_RESPONSE", "MODEL"):
+                role, text = "assistant", c.strip()
+            else:
+                continue
+            if text:
+                msgs.append((lineno, role, text, e.get("created_at")))
             continue
         # Codex CLI rollout: under Codex, transcript_path is the session
         # rollout JSONL (2026-09-07). A turn is a response_item whose payload

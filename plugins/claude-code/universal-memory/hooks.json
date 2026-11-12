@@ -1,0 +1,18 @@
+{
+  "universal-memory": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "hooks\\run-hook.cmd agy-session-start.sh || bash hooks/agy-session-start.sh",
+        "timeout": 60
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "hooks\\run-hook.cmd agy-stop.sh || bash hooks/agy-stop.sh",
+        "timeout": 120
+      }
+    ]
+  }
+}

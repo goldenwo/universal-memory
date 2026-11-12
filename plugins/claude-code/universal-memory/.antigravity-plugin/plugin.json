@@ -1,0 +1,21 @@
+{
+  "name": "universal-memory",
+  "description": "Cross-session, cross-device memory for Antigravity. Markdown-first captures, vector-backed recall. Points at any universal-memory server: local Docker, remote self-hosted, or cloud-backed.",
+  "version": "1.30.3",
+  "author": {
+    "name": "goldenwo",
+    "url": "https://github.com/goldenwo"
+  },
+  "homepage": "https://github.com/goldenwo/universal-memory",
+  "repository": "https://github.com/goldenwo/universal-memory",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "context",
+    "cross-session",
+    "self-hosted",
+    "markdown",
+    "session-continuity",
+    "antigravity"
+  ]
+}
