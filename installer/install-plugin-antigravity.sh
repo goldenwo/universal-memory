@@ -19,10 +19,14 @@
 # uninstall can ask a question is not known (none was seen); with no stdin a
 # question fails at once instead of waiting.
 #
-# Nothing else is needed afterwards: the hooks read ~/.um/endpoint and
-# ~/.um/auth-token, the files the server installer or `install.sh --remote`
-# writes. Measured on the Antigravity CLI on Windows only; macOS, Linux, and
-# the Antigravity app and IDE are not.
+# The hooks read ~/.um/endpoint and ~/.um/auth-token. `install.sh --remote`
+# writes both; a server installed on the same machine writes only the token
+# (and a UM_SERVER_URL export in the shell rc, which a hook started by agy from
+# PowerShell never sees). With no endpoint file the hooks still send turns to
+# http://localhost:6335 but inject no state and run no search, and nothing in
+# the session shows it, so the closing lines say so when the file is missing.
+# Measured on the Antigravity CLI on Windows only; macOS, Linux, and the
+# Antigravity app and IDE are not.
 #
 # Usage:
 #   bash installer/install-plugin-antigravity.sh [--yes]
@@ -122,3 +126,10 @@ fi
 
 ok "Antigravity plugin installed. It takes effect in the next conversation; nothing else to set up."
 ok "After a universal-memory update, run this again. To remove it: agy plugin uninstall universal-memory"
+
+# UM_SERVER_URL in this shell does not count: agy's hooks run in their own
+# shell and read the file.
+if [ ! -s "$HOME/.um/endpoint" ]; then
+  warn "No server address is saved yet (~/.um/endpoint is missing). Turns will be sent to http://localhost:6335, but no project state or memory will be injected until one is saved. Save it with:"
+  warn "  bash installer/install.sh --remote <server URL>     (http://localhost:6335 for a server on this machine)"
+fi

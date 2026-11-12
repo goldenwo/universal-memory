@@ -1321,6 +1321,36 @@ assert_eq "S35: an unknown trailer is cut at the first closing tag" "$(body_fiel
 assert_eq "S35: a closing tag at the end of the content" "$(body_field 3 content)" "opened and closed at the end"
 
 # ===========================================================================
+# S36: wrapper shapes that were never measured must fail toward LESS text
+# ===========================================================================
+# Only one wrapper shape was ever seen. If Antigravity changes it, the parser
+# must not start storing client metadata or an invoked skill's file as the
+# user's words: every case below carries a LEAK-MARKER that must reach no body.
+echo "=== S36: Antigravity unknown wrapper shapes do not leak ==="
+H=$(fresh_home s36)
+TP="$TMPDIR_ROOT/s36-agy.jsonl"
+printf '%s\n' \
+  '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:00Z","content":"\n<USER_REQUEST>\na blank line came first\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\n<SKILL>\nLEAK-MARKER-1\n</SKILL>\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":1,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:01Z","content":"<USER_REQUEST>\nan unknown block follows\n</USER_REQUEST>\n<NEW_BLOCK>\nLEAK-MARKER-2\n</NEW_BLOCK>\n<ADDITIONAL_METADATA>\n<SKILL>\nLEAK-MARKER-3\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\n</SKILL>\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":2,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:02Z","content":"<USER_REQUEST>\nthe metadata tag grew an attribute\n</USER_REQUEST>\n<ADDITIONAL_METADATA version=\"2\">\n<SKILL>\nLEAK-MARKER-4\n</USER_REQUEST>\n</SKILL>\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":3,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:03Z","content":"no wrapper at all\n<ADDITIONAL_METADATA>\nLEAK-MARKER-5\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":4,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:04Z","content":"<USER_REQUEST>\nthe wrapper never closes\n<ADDITIONAL_METADATA>\nLEAK-MARKER-6\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":5,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:05Z","content":"<USER_REQUEST>\nhow do I write\n<Component>\nin JSX?\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nLEAK-MARKER-7\n</ADDITIONAL_METADATA>"}' > "$TP"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S36: 6 append-turn POSTs" "$(append_post_count)" "6"
+assert_eq "S36: a blank line before the wrapper" "$(body_field 1 content)" "a blank line came first"
+assert_eq "S36: an unknown block after the closing tag" "$(body_field 2 content)" "an unknown block follows"
+assert_eq "S36: a metadata tag with an attribute" "$(body_field 3 content)" "the metadata tag grew an attribute"
+assert_eq "S36: no wrapper, text ends where a client block starts" "$(body_field 4 content)" "no wrapper at all"
+assert_eq "S36: a wrapper that never closes" "$(body_field 5 content)" "the wrapper never closes"
+assert_eq "S36: a mixed-case tag the user typed is kept" "$(body_field 6 content)" "how do I write
+<Component>
+in JSX?"
+assert_not_contains "S36: no LEAK-MARKER reaches any POST body" "$(cat "$CAP_DIR"/body_* 2>/dev/null)" "LEAK-MARKER"
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

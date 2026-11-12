@@ -30,7 +30,11 @@ trap 'printf "{}\n"; exit 0' EXIT
 trap 'exit 0' HUP INT TERM
 
 RAW=$(cat)
-if [ -z "${RAW//[[:space:]]/}" ]; then um_log "skip=empty-stdin"; exit 0; fi
+# A pattern match, not ${RAW//[[:space:]]/}: see agy-session-start.sh.
+case "$RAW" in
+  *[![:space:]]*) ;;
+  *) um_log "skip=empty-stdin"; exit 0 ;;
+esac
 
 PY=$(um_find_python) || { um_log "skip=no-python"; exit 0; }
 

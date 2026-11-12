@@ -233,6 +233,27 @@ assert_exit_zero "N10: exits 0" "$TX_EXIT_N10"
 assert_eq "N10: installs plugins/claude-code/universal-memory" \
   "$(calls | tail -1)" "plugin install $(as_agy_sees "$REPO_ROOT/plugins/claude-code/universal-memory")"
 
+# ─── N11: no saved server address ────────────────────────────────────────────
+# The hooks inject a project's state only when a server address is saved in
+# ~/.um/endpoint. A server installed on the same machine saves none (only
+# `install.sh --remote` and Claude Code's /um-setup do), and Antigravity has
+# no /um-setup. Without the file the session looks healthy and recalls nothing,
+# so the installer has to say so.
+echo ""
+echo "=== N11: says when no server address is saved ==="
+new_case n11; make_fakeagy "$T/bin/agy" "$CALLS"
+_tx_capture N11 run_installer UM_SERVER_URL=http://set-in-this-shell-only:6335
+_dump_on_fail N11
+assert_exit_zero "N11: still exits 0" "$TX_EXIT_N11"
+assert_contains "N11: names the missing file" "$TX_OUT_N11" ".um/endpoint is missing"
+assert_contains "N11: gives the command that saves it" "$TX_OUT_N11" "installer/install.sh --remote"
+new_case n11b; make_fakeagy "$T/bin/agy" "$CALLS"
+mkdir -p "$T/home/.um"; printf 'http://pi:6337\n' > "$T/home/.um/endpoint"
+_tx_capture N11B run_installer
+assert_exit_zero "N11: exits 0 with an address saved" "$TX_EXIT_N11B"
+if [[ "$TX_OUT_N11B" != *"--remote"* ]]; then pass "N11: says nothing about it when an address is saved"
+else fail_test "N11: says nothing about it when an address is saved" "the warning was printed"; fi
+
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

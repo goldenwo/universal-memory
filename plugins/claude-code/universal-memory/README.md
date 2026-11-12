@@ -144,6 +144,10 @@ macOS, Linux, and the Antigravity app and IDE are untested.
 The two `agy-` scripts only translate Antigravity's hook input and output (`lib/agy.sh`); the
 capture and recall logic is the one the other hosts run. What differs:
 
+- **The server's address must be saved in `~/.um/endpoint`**, which `bash installer/install.sh
+  --remote <url>` writes. `/um-setup` does not exist on Antigravity, and a server installed on
+  the same machine does not write the file: without it the hooks capture turns to
+  `http://localhost:6335` but inject nothing.
 - **No session-end event.** The end-of-session summary and the `state.md` update come from the
   server's idle sweep, hourly, for sessions idle six hours or more. Turns are captured at once.
 - **`SessionStart` is not fired again when a conversation is resumed**, so a resumed conversation

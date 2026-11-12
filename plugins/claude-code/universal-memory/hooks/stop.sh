@@ -272,23 +272,42 @@ def nontext_turn(records):
     return injected and replied
 
 # Antigravity wraps what the user typed in a <USER_REQUEST> block and appends
-# client-added blocks after it. The closing tag that counts is the FIRST one
-# followed by <ADDITIONAL_METADATA> or by the end of the content, never the
-# last: a skill the user invokes is embedded whole inside the metadata block
-# (measured 2026-11-09), and a skill body with a closing-tag line would
-# otherwise be stored as the user`s words. With no such tag (an unknown
-# trailer), cut at the first closing tag: losing text is the safer error.
+# client-added blocks after it (<ADDITIONAL_METADATA>, <USER_SETTINGS_CHANGE>).
+# A skill the user invokes is embedded whole inside the metadata block
+# (measured 2026-11-09), so reading too far would store a skill`s file as the
+# user`s words and recall it into later sessions. Only one wrapper shape was
+# ever measured; every rule here is written so that a shape nobody has seen
+# yields LESS text, never more (S32, S35, S36):
+#   - the text starts after the first <USER_REQUEST> line, wherever it is;
+#   - it ends at the FIRST closing tag that is followed by a client block or
+#     by the end of the content, never the last one. A closing tag followed by
+#     prose is something the user typed;
+#   - with no such tag it ends at the first closing tag, and with none at all,
+#     or with no wrapper, at the first client block.
+# A client block is a line opening an ALL-CAPITALS tag. A mixed-case tag
+# (<Component>) is the user`s own text.
+def agy_block_open(line):
+    s = line.strip()
+    if not s.startswith("<") or s.startswith("</"):
+        return False
+    name = s[1:].split(">")[0].split(" ")[0]
+    return bool(name) and all(c.isupper() or c == "_" for c in name)
+
 def agy_user_text(content):
     lines = content.split("\n")
-    if lines[0].strip() != "<USER_REQUEST>":
-        return content.strip()
-    closes = [i for i in range(1, len(lines)) if lines[i].strip() == "</USER_REQUEST>"]
-    for i in closes:
-        rest = [r.strip() for r in lines[i + 1:] if r.strip()]
-        if not rest or rest[0] == "<ADDITIONAL_METADATA>":
-            return "\n".join(lines[1:i]).strip()
-    end = closes[0] if closes else len(lines)
-    return "\n".join(lines[1:end]).strip()
+    start = next((i for i, l in enumerate(lines)
+                  if l.strip().lstrip("﻿") == "<USER_REQUEST>"), None)
+    body = lines if start is None else lines[start + 1:]
+    if start is not None:
+        closes = [i for i, l in enumerate(body) if l.strip() == "</USER_REQUEST>"]
+        for i in closes:
+            rest = [r for r in body[i + 1:] if r.strip()]
+            if not rest or agy_block_open(rest[0]):
+                return "\n".join(body[:i]).strip()
+        if closes:
+            return "\n".join(body[:closes[0]]).strip()
+    end = next((i for i, l in enumerate(body) if agy_block_open(l)), len(body))
+    return "\n".join(body[:end]).strip()
 
 msgs = []   # (lineno, role, text, timestamp)
 tail = []   # records past the cursor, for nontext_turn

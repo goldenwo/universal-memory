@@ -167,6 +167,23 @@ append_count() {
   printf '%s' "$n"
 }
 
+# search_query — the "query" field of the one /api/search request body.
+search_query() {
+  local f
+  for f in "$CAP_DIR"/url_*; do
+    [ -f "$f" ] || continue
+    case "$(cat "$f")" in */api/search)
+      "$PYBIN" -c '
+import json, sys
+sys.stdout.reconfigure(newline=chr(10))
+with open(sys.argv[1], encoding="utf-8") as fh:
+    sys.stdout.write(json.load(fh).get("query", "<no query field>"))' "$(native_path "${f/url_/body_}")"
+      return 0 ;;
+    esac
+  done
+  printf '<no search request>'
+}
+
 fresh_home() {
   local d="$TMPDIR_ROOT/home_$1"
   mkdir -p "$d"
@@ -250,7 +267,8 @@ assert_contains "H1: the search section is injected" "$MSG" "Relevant from your 
 assert_contains "H1: the search hit is injected" "$MSG" "SEARCH-HIT-MARKER"
 assert_eq "H1: one state fetch" "$(url_count /api/state/example-project)" "1"
 assert_eq "H1: one search" "$(url_count /api/search)" "1"
-assert_contains "H1: the search query is the prompt" "$(cat "$CAP_DIR"/body_* 2>/dev/null)" "What did we decide about the config loader guard?"
+assert_eq "H1: the search query is exactly the prompt, nothing of the hook input around it" \
+  "$(search_query)" "What did we decide about the config loader guard?"
 assert_contains "H1: own log line" "$LOG" "agy-session-start ok sid=$SID"
 assert_contains "H1: the inner state line" "$LOG" "session-start state project=example-project"
 assert_contains "H1: the inner search line" "$LOG" "user-prompt-submit search rc=0 results=1 injected=1"
@@ -279,7 +297,7 @@ echo "=== H4: unusable input ==="
 H=$(fresh_home h4)
 for script in "$SS" "$ST"; do
   name=$(basename "$script" .sh)
-  for case_ in "empty-stdin|" "bad-stdin|this is not json" "bad-stdin|[1,2]" \
+  for case_ in "empty-stdin|" "empty-stdin|   	  " "bad-stdin|this is not json" "bad-stdin|[1,2]" \
                'no-workspace|{"conversationId":"c1","workspacePaths":[]}'; do
     reason="${case_%%|*}"; input="${case_#*|}"
     rm -f "$H/.um/hook.log"

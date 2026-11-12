@@ -39,7 +39,13 @@ trap 'printf "%s\n" "$OUT"; exit 0' EXIT
 trap 'exit 0' HUP INT TERM
 
 RAW=$(cat)
-if [ -z "${RAW//[[:space:]]/}" ]; then um_log "skip=empty-stdin"; exit 0; fi
+# A pattern match, not ${RAW//[[:space:]]/}: the input carries the user's whole
+# first prompt, and bash's substitution is quadratic in its length (measured:
+# 81 s on 1 MB, past this hook's timeout; this takes milliseconds).
+case "$RAW" in
+  *[![:space:]]*) ;;
+  *) um_log "skip=empty-stdin"; exit 0 ;;
+esac
 
 PY=$(um_find_python) || { um_log "skip=no-python"; exit 0; }
 

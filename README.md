@@ -130,23 +130,24 @@ Then start `codex` once. It lists the four universal-memory hooks as new: choose
 
 ### Antigravity
 
-Antigravity's CLI loads the same plugin folder, through two hooks of its own. With the memory server set up (step 1, or `bash installer/install.sh --remote <url>` on a machine that does not run it), from a checkout of this repository:
+Antigravity's CLI loads the same plugin folder, through two hooks of its own. From a checkout of this repository:
 
 ```bash
 bash installer/install.sh --plugin-antigravity
 ```
 
-That hands the plugin folder to Antigravity (`agy plugin validate`, then `agy plugin uninstall universal-memory`, then `agy plugin install`); a full `--yes` install does the same when it finds Antigravity. There is nothing to trust or configure afterwards. From the next conversation, the project's state and the memories that match your first prompt are injected when the conversation starts, and each turn is captured as it ends.
+That hands the plugin folder to Antigravity (`agy plugin validate`, then `agy plugin uninstall universal-memory`, then `agy plugin install`); a full `--yes` install does the same when it finds Antigravity. There is nothing to trust afterwards. From the next conversation, the project's state and the memories that match your first prompt are injected when the conversation starts, and each turn is captured as it ends.
 
 What to know:
 
+- **The hooks need the server's address saved in `~/.um/endpoint`.** `bash installer/install.sh --remote <url>` saves it (and the token); a server installed on the same machine does not, so there run `bash installer/install.sh --remote http://localhost:6335 --plugin-antigravity` once. Without the file, turns are still captured to `http://localhost:6335`, but no state and no memories are injected. The installer says so when the file is missing.
 - **Tested on the Antigravity CLI (agy 1.5.3) on Windows only.** macOS and Linux, and the Antigravity app and IDE, are untested. On Windows the hooks need Git for Windows, as they do under Codex.
 - **The end-of-session summary arrives late.** Antigravity has no session-end event, so `state.md` is refreshed by the server's idle sweep: it runs hourly and takes sessions that have been idle for six hours. Turns are captured at once.
 - **`/um-setup`, `/um-checkpoint` and `/um-preview` do not exist there.** The two skills load as `/universal-memory:create-adr` and `/universal-memory:create-remember`.
 - **A failing hook is silent in the session.** Antigravity records it only in `~/.gemini/antigravity-cli/cli.log`; the hooks' own record is `~/.um/hook.log`, in the lines that start `agy-session-start` and `agy-stop`.
 - **After a universal-memory update, run the command again.** Antigravity keeps its own copy of the plugin. To remove it: `agy plugin uninstall universal-memory`.
 
-The hooks need no MCP server. To give the model the memory tools as well, add the server to `~/.gemini/config/mcp_config.json`; Antigravity then asks before each tool call until you choose to always allow it:
+The hooks need no MCP server. To give the model the memory tools as well, add the server to `.agents/mcp_config.json` in the project folder; Antigravity then asks before each tool call until you choose to always allow it:
 
 ```json
 {

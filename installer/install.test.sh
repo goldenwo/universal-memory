@@ -280,7 +280,7 @@ if echo "$TX_OUT_TA4Y" | grep -q "delegate: server/install.sh"; then pass "T-AGY
 # No flags and no terminal is the same full install.
 _tx_capture TA4D env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA4/repo" \
   PATH="$TA4/bin:/usr/bin:/bin" HOME="$TA4/fakehome" LOCALAPPDATA="$TA4/localappdata" \
-  bash "$INSTALLER"
+  bash "$INSTALLER" </dev/null
 if echo "$TX_OUT_TA4D" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "T-AGY-4: a default run with an agy CLI delegates it"; else fail "T-AGY-4: default run did not delegate (got: $TX_OUT_TA4D)"; fi
 rm -rf "$TA4"
 
