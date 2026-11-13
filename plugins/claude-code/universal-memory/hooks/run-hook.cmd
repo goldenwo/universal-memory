@@ -1,5 +1,11 @@
 @echo off
-rem hooks/run-hook.cmd - Windows launcher for this plugin's hooks under Codex (#313).
+rem hooks/run-hook.cmd - Windows launcher for this plugin's hooks under Codex (#313) and
+rem Antigravity (#410).
+rem
+rem Antigravity runs a hook as cmd /c "<command>" from the installed plugin's root, with no
+rem HOME, and any double quote in the command breaks it (agy 1.5.3, measured). The plugin-root
+rem hooks.json therefore calls this file relative and unquoted, as hooks\run-hook.cmd x.sh, and
+rem cannot add /d. Everything below applies to both callers; the Codex notes say so by name.
 rem
 rem Why: Codex runs a Windows hook through the session shell (measured with codex-cli
 rem 0.155.1: powershell.exe -NoProfile -Command, or pwsh when installed; cmd.exe /C only

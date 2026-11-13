@@ -12,7 +12,9 @@
  *   - .claude-plugin/marketplace.json (universal-memory entry)  → MUST track (what `claude plugin install` and
  *     `codex plugin add` advertise — #159 T8; Codex installs the same entry since the MCP-only
  *     plugins/codex copy was retired in 2026-10)
- *   - plugins/openclaw/reaction-producer/                       → intentionally EXCLUDED (#201 PR 2: bot-side sidecar,
+ *   - plugins/claude-code/.../.antigravity-plugin/plugin.json  → MUST track (#410: the same plugin folder's manifest
+ *     for Antigravity; `agy plugin install` copies the folder, so a stale version there misreports the install)
+ *   - plugins/openclaw/reaction-producer/                     → intentionally EXCLUDED (#201 PR 2: bot-side sidecar,
  *     no manifest; producer ↔ server compatibility rides the additive-only /api/reaction OpenAPI contract, no version pinning)
  */
 import test from 'node:test';
@@ -32,6 +34,17 @@ test('version drift gate: claude-code plugin manifest tracks server/package.json
     server,
     `claude-code plugin.json version (${ccPlugin}) must equal server/package.json (${server}). ` +
     `Bump it on every release — this gate mechanizes the #86 / v1.2 release-audit finding.`,
+  );
+});
+
+test('version drift gate: antigravity plugin manifest tracks server/package.json', () => {
+  const server = versionOf('server/package.json');
+  const agyPlugin = versionOf('plugins/claude-code/universal-memory/.antigravity-plugin/plugin.json');
+  assert.equal(
+    agyPlugin,
+    server,
+    `antigravity plugin.json version (${agyPlugin}) must equal server/package.json (${server}). ` +
+    `It sits beside .claude-plugin/plugin.json in the same folder; bump both on every release.`,
   );
 });
 

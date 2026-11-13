@@ -737,6 +737,11 @@ jobs:
       # was the second half of the same shellchecked-but-unrun gap. Wired
       # in as a follow-up to PR #39's installer-cc wire-up.
       - run: bash installer/install-plugin-codex.test.sh
+      # install-plugin-antigravity.test.sh covers the Antigravity plugin
+      # installer (#410): validate, uninstall, install against a fake agy, the
+      # no-Antigravity paths, and agy.exe found under a temp LOCALAPPDATA.
+      # No real agy on the runner, and none is wanted.
+      - run: bash installer/install-plugin-antigravity.test.sh
       # install-remote.test.sh covers the #159 T7 remote-client flow
       # (install.sh --remote): the um_verify_endpoint probe taxonomy plus the
       # dead-endpoint / writes-disabled / server-too-old / live-loopback /

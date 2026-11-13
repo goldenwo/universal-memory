@@ -128,6 +128,38 @@ codex plugin add universal-memory@universal-memory
 
 Then start `codex` once. It lists the four universal-memory hooks as new: choose **Trust all and continue**, or review them one by one. Codex runs none of them until you do, and `codex exec` never asks. Codex 0.164 and later asks again after each universal-memory update, because its approval covers every file in the installed plugin: trust them again in `codex` (or the Codex app's hook review), or nothing is captured from that machine, `codex exec` runs included. The installer's closing line says whether Codex currently has them approved, and so does `bash server/install.sh --verify` when Codex is on the server's machine. The hooks read the same server settings as Claude Code (`~/.um/endpoint` and `~/.um/auth-token`); on a machine that does not run the server, write them with `bash installer/install.sh --remote <url>`. On Windows, see [Codex on Windows](plugins/claude-code/universal-memory/README.md#codex-on-windows).
 
+### Antigravity
+
+Antigravity's CLI loads the same plugin folder, through two hooks of its own. From a checkout of this repository:
+
+```bash
+bash installer/install.sh --plugin-antigravity
+```
+
+That hands the plugin folder to Antigravity (`agy plugin validate`, then `agy plugin uninstall universal-memory`, then `agy plugin install`); a full `--yes` install does the same when it finds Antigravity. There is nothing to trust afterwards. From the next conversation, the project's state and the memories that match your first prompt are injected when the conversation starts, and each turn is captured as it ends.
+
+What to know:
+
+- **The hooks need the server's address saved in `~/.um/endpoint`.** `bash installer/install.sh --remote <url>` saves it (and the token); a server installed on the same machine does not, so there run `bash installer/install.sh --remote http://localhost:6335 --plugin-antigravity` once. Without the file, turns are still captured to `http://localhost:6335`, but no state and no memories are injected. The installer says so when the file is missing.
+- **Tested on the Antigravity CLI (agy 1.5.3) on Windows only.** macOS and Linux, and the Antigravity app and IDE, are untested. On Windows the hooks need Git for Windows, as they do under Codex.
+- **The end-of-session summary arrives late.** Antigravity has no session-end event, so `state.md` is refreshed by the server's idle sweep: it runs hourly and takes sessions that have been idle for six hours. Turns are captured at once.
+- **`/um-setup`, `/um-checkpoint` and `/um-preview` do not exist there.** The two skills load as `/universal-memory:create-adr` and `/universal-memory:create-remember`.
+- **A failing hook is silent in the session.** Antigravity records it only in `~/.gemini/antigravity-cli/cli.log`; the hooks' own record is `~/.um/hook.log`, in the lines that start `agy-session-start` and `agy-stop`.
+- **After a universal-memory update, run the command again.** Antigravity keeps its own copy of the plugin. To remove it: `agy plugin uninstall universal-memory`.
+
+The hooks need no MCP server. To give the model the memory tools as well, add the server to `.agents/mcp_config.json` in the project folder; Antigravity then asks before each tool call until you choose to always allow it:
+
+```json
+{
+  "mcpServers": {
+    "universal-memory": {
+      "serverUrl": "http://<your-server>:6335/mcp",
+      "headers": { "Authorization": "Bearer <UM_AUTH_TOKEN>" }
+    }
+  }
+}
+```
+
 ### Install with an AI agent
 
 Paste this into Claude Code, or any coding agent that can run a shell:
@@ -187,12 +219,13 @@ See [installer/install-cli.md](installer/install-cli.md) for the subcommand refe
 
 ## Surfaces
 
-The same vault is reachable from every surface below. Capture is automatic where the surface has a hook pipeline (Claude Code, Codex CLI, mem0-compatible bots); elsewhere you say "remember" and the connector's tools do the write.
+The same vault is reachable from every surface below. Capture is automatic where the surface has a hook pipeline (Claude Code, Codex CLI, Antigravity CLI, mem0-compatible bots); elsewhere you say "remember" and the connector's tools do the write.
 
 | Surface | Capture | Recall | Setup |
 |---|---|---|---|
 | **Claude Code** | Automatic (session hooks) | Automatic (`state.md` injected at session start) | One command |
 | **Codex CLI** | Automatic (the same session hooks) | Automatic (`state.md` injected at session start) | One command, then trust the hooks (Codex 0.164+ asks again after each update) |
+| **Antigravity CLI** | Automatic (the same hook scripts; the end-of-session summary follows within hours) | Automatic (`state.md` injected at the first prompt) | One command (tested on Windows only) |
 | **claude.ai** (web + mobile) | Say "remember" | On demand, via MCP tools | OAuth connector |
 | **ChatGPT** (Desktop / Custom GPT) | Say "remember" | On demand, via MCP or REST | Connector + tunnel |
 | **Claude Desktop** | Say "remember" | On demand, via MCP tools | Local config, no tunnel |
@@ -207,7 +240,7 @@ Requests to `/api` and `/mcp` must carry `Authorization: Bearer <UM_AUTH_TOKEN>`
 
 - **Session continuity** — a `state.md` per project is injected at the start of every session: current focus, in-flight work, recent decisions, next actions, with no manual setup.
 - **Cross-surface access** — any MCP client (Claude Code, claude.ai connector, Claude Desktop) reads and writes the same store via 11 MCP tools (the 4 read tools always; the write tools when `UM_MCP_WRITE_ENABLED=true`, which `installer/install.sh` sets for a new install). Read responses return compact snippets by default; opt into full bodies with `full: true`.
-- **Cross-environment capture** — capture is not Claude Code-only. The Codex CLI runs the same session hooks, and claude.ai and ChatGPT Desktop feed conversation turns into the same pipeline via `memory_append_turn` and trigger summaries with `memory_checkpoint`.
+- **Cross-environment capture** — capture is not Claude Code-only. The Codex CLI runs the same session hooks, the Antigravity CLI runs the same scripts from its own two hooks, and claude.ai and ChatGPT Desktop feed conversation turns into the same pipeline via `memory_append_turn` and trigger summaries with `memory_checkpoint`.
 - **Command-line toolkit** — an 8-subcommand `um` CLI (`search`, `state`, `recent`, `list`, `capture`, `tail`, `forget`, `supersede`) for shell scripts and cron, composable with grep / awk / jq. Installs standalone against any reachable UM server.
 - **Authored knowledge that lasts** — ADRs, character sheets, hypotheses, goals, and strategies live as plain markdown with frontmatter versioning; superseded documents stay auditable. `/adr "<title>"` writes and registers a decision in one step; `/remember <text>` saves a casual fact with no file or git repo required.
 - **Markdown as source of truth** — no vendor lock-in. Swap the vector store, LLM provider, or plugin format and your knowledge survives as readable files under git.
@@ -263,7 +296,7 @@ universal-memory/
 ├── server/       Self-hostable backend (Qdrant + mem0 + MCP/REST endpoints)
 ├── installer/    Install wizards (server, CLI, plugins)
 ├── cli/          `um` command-line toolkit source
-├── plugins/      Per-surface connectors (Claude Code and Codex share one; OpenClaw, ChatGPT Custom GPT)
+├── plugins/      Per-surface connectors (Claude Code, Codex and Antigravity share one; OpenClaw, ChatGPT Custom GPT)
 └── examples/     Integration examples and deferred-example notes
 ```
 
@@ -284,7 +317,7 @@ cd server
 
 Steps, in order: record the running image → pull → pre-flight → swap → health-verify → auto-rollback on failure. It exits non-zero if the upgrade did not take, and prints the manual revert command either way.
 
-The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), on a Codex host `bash installer/install.sh --plugin-codex` from this checkout (it upgrades the marketplace, installs the new version and says whether Codex needs the hooks trusted again; by hand that is `codex plugin marketplace upgrade universal-memory` and then `codex plugin add universal-memory@universal-memory`, after which, on Codex 0.164 and later, you start `codex` once and trust the hooks again, because they do not run until you do), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
+The other two surfaces: `claude plugin marketplace update universal-memory` and then `claude plugin update universal-memory@universal-memory` for the plugin (then restart Claude Code), on a Codex host `bash installer/install.sh --plugin-codex` from this checkout (it upgrades the marketplace, installs the new version and says whether Codex needs the hooks trusted again; by hand that is `codex plugin marketplace upgrade universal-memory` and then `codex plugin add universal-memory@universal-memory`, after which, on Codex 0.164 and later, you start `codex` once and trust the hooks again, because they do not run until you do), on an Antigravity host `bash installer/install.sh --plugin-antigravity` again (Antigravity keeps its own copy of the plugin), and `bash installer/install-cli.sh --no-path` for the `um` CLI — `--upgrade` does the latter for you when a CLI is installed. `bash server/install.sh --verify` reports all three versions and flags skew.
 
 <details>
 <summary><b>Driving compose yourself, and host-specific overrides</b></summary>
@@ -315,6 +348,7 @@ Published images: `ghcr.io/goldenwo/universal-memory-server` — semver tags (`X
 
 - `bash server/install.sh --verify` — reports all three surface versions and flags skew; the fastest first check.
 - `bash installer/install-plugin-codex.sh --check` — on a machine with Codex, says whether Codex still has the hooks approved (it stops running them after each update until you trust them again). The same answer appears as `codex-hooks` in `--verify`. If it still warns right after you trusted them, Codex has changed how it checks: open an issue.
+- On Antigravity a failing hook shows nothing in the session: look for `jsonhook__universal-memory` in `~/.gemini/antigravity-cli/cli.log`, and for the `agy-session-start` and `agy-stop` lines in `~/.um/hook.log`.
 - `curl http://localhost:6335/health` — the server's liveness answer (`{"ok":true,...}`).
 - `docker compose logs -f` from `server/` — the server logs structured JSON; errors are self-describing.
 - Still stuck? [Open an issue](https://github.com/goldenwo/universal-memory/issues) with the log lines and your `--verify` output.

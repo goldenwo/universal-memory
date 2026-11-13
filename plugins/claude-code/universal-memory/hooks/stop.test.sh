@@ -66,6 +66,15 @@
 #        <system-reminder> block are never POSTed; cursor lands on the last line.
 #   S30. Second fire on the unchanged rollout ⇒ zero new append-turn POSTs.
 #   S31. 429 then 200 on an append POST ⇒ um-api.sh retries once, nothing lost.
+#   S32. Antigravity CLI transcript (2026-11-09): the SAME hook captures an
+#        Antigravity session — the user's text out of its <USER_REQUEST>
+#        wrapper, text replies, created_at as timestamp; injected system
+#        messages, tool steps, tool results and an invoked skill's body are
+#        never POSTed.
+#   S33. Second fire on the unchanged Antigravity transcript ⇒ zero new POSTs.
+#   S34. A delta of only tool records ⇒ skip=empty-delta-filtered + a signal.
+#   S35. Wrapper edge shapes: no wrapper, an unknown trailer, a closing tag at
+#        the end of the content.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1212,6 +1221,134 @@ assert_eq "S31: message 2 follows" "$(body_field 3 content)" "s31-2 content"
 assert_eq "S31: zero anomaly signals" "$(signal_post_count)" "0"
 assert_eq "S31: cursor at transcript end" "$(cat "$H/.um/state/stop-cursor-$SID" 2>/dev/null)" "3"
 assert_contains "S31: posted n=3" "$(cat "$H/.um/hook.log" 2>/dev/null)" "posted http=200 n=3"
+
+# ===========================================================================
+# S32: Antigravity CLI transcript — the same hook, the same wire contract
+# ===========================================================================
+# Antigravity passes transcript_full.jsonl. A record carries step_index,
+# source, type, status, created_at and content (measured on agy 1.5.3,
+# 2026-11-09). What the user typed sits inside a <USER_REQUEST> wrapper,
+# followed by client-added metadata; a reply is a PLANNER_RESPONSE with text.
+# Injected system messages, tool-only planner steps and tool results (GENERIC:
+# an MCP memory search result lands there in full) are not conversation.
+echo "=== S32: Antigravity transcript capture ==="
+H=$(fresh_home s32)
+TP="$TMPDIR_ROOT/s32-agy.jsonl"
+cp "$FIXTURES/agy-transcript-sample.jsonl" "$TP"
+CWD_N="$TMPDIR_ROOT/example-project"; mkdir -p "$CWD_N/.git"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+
+reset_calls
+run_stop "$H" "$STDIN"
+
+assert_eq "S32: exit 0" "$RUN_EXIT" "0"
+assert_eq "S32: exactly 6 append-turn POSTs (fixture lines 1,4,7,8,10,12)" "$(append_post_count)" "6"
+assert_eq "S32: no anomaly self-report on a healthy fire" "$(signal_post_count)" "0"
+assert_eq "S32: body1 role=user" "$(body_field 1 role)" "user"
+assert_eq "S32: body1 project" "$(body_field 1 project)" "example-project"
+assert_eq "S32: body1 content (no wrapper, no metadata, no settings block)" "$(body_field 1 content)" "Please review the config loader and fix the failing test in server/test."
+assert_eq "S32: body1 timestamp is created_at" "$(body_field 1 timestamp)" "2026-11-09T19:02:11Z"
+assert_eq "S32: body2 role=assistant" "$(body_field 2 role)" "assistant"
+assert_eq "S32: body2 content (a reply that also carries tool_calls)" "$(body_field 2 content)" "Let me read the config loader first."
+assert_eq "S32: body2 timestamp" "$(body_field 2 timestamp)" "2026-11-09T19:02:15Z"
+assert_eq "S32: body3 content (text reply after tools)" "$(body_field 3 content)" "The config loader does not handle a missing file.
+I added a guard and a regression test."
+assert_eq "S32: body4 role=user" "$(body_field 4 role)" "user"
+assert_eq "S32: body4 content stops at the first closing tag; the skill body is not the user's words" \
+  "$(body_field 4 content)" "/universal-memory:create-remember the loader guard shipped"
+assert_eq "S32: body5 keeps a closing tag the user typed" "$(body_field 5 content)" "Why does the wrapper end with
+</USER_REQUEST>
+in your transcript format?"
+assert_eq "S32: body6 role=assistant" "$(body_field 6 role)" "assistant"
+assert_eq "S32: body6 a record whose status is not DONE is captured like any other" \
+  "$(body_field 6 content)" "The client adds that wrapper around what you type."
+S32_ALL=$(cat "$CAP_DIR"/body_* 2>/dev/null)
+for marker in SKILL-BODY-MARKER SKILL-TAIL-MARKER INJECTED-STATE-MARKER INJECTED-SECOND-MARKER \
+              TOOL-RESULT-MARKER THINKING-MARKER NONSTRING-MARKER ADDITIONAL_METADATA USER_SETTINGS_CHANGE; do
+  assert_not_contains "S32: $marker reaches no POST body" "$S32_ALL" "$marker"
+done
+
+CURSOR_FILE="$H/.um/state/stop-cursor-$SID"
+assert_file_exists "S32: cursor file created" "$CURSOR_FILE"
+assert_eq "S32: cursor at transcript end (12 lines)" "$(cat "$CURSOR_FILE" 2>/dev/null)" "12"
+assert_contains "S32: hook.log records posted" "$(cat "$H/.um/hook.log" 2>/dev/null)" "posted http=200 n=6"
+
+# ===========================================================================
+# S33: second fire on the unchanged Antigravity transcript
+# ===========================================================================
+echo "=== S33: Antigravity no-dup across fires ==="
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S33: exit 0" "$RUN_EXIT" "0"
+assert_eq "S33: zero append-turn POSTs on the unchanged transcript" "$(append_post_count)" "0"
+assert_eq "S33: exactly one anomaly self-report" "$(signal_post_count)" "1"
+assert_eq "S33: cursor unchanged" "$(cat "$CURSOR_FILE" 2>/dev/null)" "12"
+assert_contains "S33: stalled reason logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-delta-stalled signal=sent"
+
+# ===========================================================================
+# S34: a delta holding only tool records ⇒ filtered, with a signal
+# ===========================================================================
+# Reaching this needs another plugin to continue a stop, so it should be rare.
+# The alarm is intended: an unknown record shape must not pass silently.
+echo "=== S34: Antigravity tool-only delta ==="
+printf '%s\n' \
+  '{"step_index":12,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-09T19:05:00Z","content":"","tool_calls":[{"name":"view_file","args":{"path":"README.md"}}]}' \
+  '{"step_index":13,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-11-09T19:05:01Z","content":"TOOL-RESULT-MARKER file contents"}' >> "$TP"
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S34: exit 0" "$RUN_EXIT" "0"
+assert_eq "S34: zero append-turn POSTs" "$(append_post_count)" "0"
+assert_eq "S34: exactly one anomaly self-report" "$(signal_post_count)" "1"
+assert_contains "S34: filtered reason logged" "$(cat "$H/.um/hook.log" 2>/dev/null)" "skip=empty-delta-filtered signal=sent"
+assert_eq "S34: cursor advances past the tool records" "$(cat "$CURSOR_FILE" 2>/dev/null)" "14"
+
+# ===========================================================================
+# S35: Antigravity user text with no wrapper, and a wrapper that never closes
+# ===========================================================================
+echo "=== S35: Antigravity wrapper edge shapes ==="
+H=$(fresh_home s35)
+TP="$TMPDIR_ROOT/s35-agy.jsonl"
+printf '%s\n' \
+  '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T20:00:00Z","content":"plain text with no wrapper"}' \
+  '{"step_index":1,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T20:00:05Z","content":"<USER_REQUEST>\nopened and closed\n</USER_REQUEST>\nUNKNOWN-TRAILER-MARKER a block this parser has never seen"}' \
+  '{"step_index":2,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T20:00:09Z","content":"<USER_REQUEST>\nopened and closed at the end\n</USER_REQUEST>\n"}' > "$TP"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S35: 3 append-turn POSTs" "$(append_post_count)" "3"
+assert_eq "S35: no wrapper keeps the whole content" "$(body_field 1 content)" "plain text with no wrapper"
+assert_eq "S35: an unknown trailer is cut at the first closing tag" "$(body_field 2 content)" "opened and closed"
+assert_eq "S35: a closing tag at the end of the content" "$(body_field 3 content)" "opened and closed at the end"
+
+# ===========================================================================
+# S36: wrapper shapes that were never measured must fail toward LESS text
+# ===========================================================================
+# Only one wrapper shape was ever seen. If Antigravity changes it, the parser
+# must not start storing client metadata or an invoked skill's file as the
+# user's words: every case below carries a LEAK-MARKER that must reach no body.
+echo "=== S36: Antigravity unknown wrapper shapes do not leak ==="
+H=$(fresh_home s36)
+TP="$TMPDIR_ROOT/s36-agy.jsonl"
+printf '%s\n' \
+  '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:00Z","content":"\n<USER_REQUEST>\na blank line came first\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\n<SKILL>\nLEAK-MARKER-1\n</SKILL>\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":1,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:01Z","content":"<USER_REQUEST>\nan unknown block follows\n</USER_REQUEST>\n<NEW_BLOCK>\nLEAK-MARKER-2\n</NEW_BLOCK>\n<ADDITIONAL_METADATA>\n<SKILL>\nLEAK-MARKER-3\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\n</SKILL>\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":2,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:02Z","content":"<USER_REQUEST>\nthe metadata tag grew an attribute\n</USER_REQUEST>\n<ADDITIONAL_METADATA version=\"2\">\n<SKILL>\nLEAK-MARKER-4\n</USER_REQUEST>\n</SKILL>\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":3,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:03Z","content":"no wrapper at all\n<ADDITIONAL_METADATA>\nLEAK-MARKER-5\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":4,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:04Z","content":"<USER_REQUEST>\nthe wrapper never closes\n<ADDITIONAL_METADATA>\nLEAK-MARKER-6\n</ADDITIONAL_METADATA>"}' \
+  '{"step_index":5,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-09T21:00:05Z","content":"<USER_REQUEST>\nhow do I write\n<Component>\nin JSX?\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nLEAK-MARKER-7\n</ADDITIONAL_METADATA>"}' > "$TP"
+STDIN=$(make_stdin "$SID" "$(native_path "$TP")" "$(native_path "$CWD_N")")
+reset_calls
+run_stop "$H" "$STDIN"
+assert_eq "S36: 6 append-turn POSTs" "$(append_post_count)" "6"
+assert_eq "S36: a blank line before the wrapper" "$(body_field 1 content)" "a blank line came first"
+assert_eq "S36: an unknown block after the closing tag" "$(body_field 2 content)" "an unknown block follows"
+assert_eq "S36: a metadata tag with an attribute" "$(body_field 3 content)" "the metadata tag grew an attribute"
+assert_eq "S36: no wrapper, text ends where a client block starts" "$(body_field 4 content)" "no wrapper at all"
+assert_eq "S36: a wrapper that never closes" "$(body_field 5 content)" "the wrapper never closes"
+assert_eq "S36: a mixed-case tag the user typed is kept" "$(body_field 6 content)" "how do I write
+<Component>
+in JSX?"
+assert_not_contains "S36: no LEAK-MARKER reaches any POST body" "$(cat "$CAP_DIR"/body_* 2>/dev/null)" "LEAK-MARKER"
 
 # ===========================================================================
 # Summary

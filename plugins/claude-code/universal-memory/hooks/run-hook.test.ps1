@@ -16,6 +16,11 @@
 # HTTP server, with PYTHONUTF8 and PYTHONIOENCODING removed: the hooks' own Python must read its
 # UTF-8 input correctly whatever the launching shell set.
 #
+# Antigravity (#410) is a second caller of run-hook.cmd, through the plugin-root hooks.json. It
+# runs a hook as  cmd /c "<command>"  from the installed plugin's root with no HOME (agy 1.5.3,
+# measured 2026-11-09). Case 15 runs each of those commands that way with stub scripts, case 16
+# pins what a failing script causes, and case 14b runs the real agy-session-start.sh.
+#
 # Harness rules, both learned the hard way (2026-09-22):
 #  - Variables are set on THIS process and inherited. Rebuilding a child's environment through
 #    ProcessStartInfo.EnvironmentVariables made cmd and bash lookups fail intermittently.
@@ -629,10 +634,86 @@ server.serve_forever()
             $mode = Invoke-Hook 'CMD' ('"' + $gitBash + '" "' + $modeSh + '"') $payload329 $tmp $vars329
             $modeOut = [System.Text.Encoding]::ASCII.GetString($mode.Out).Trim()
             Check ($modeOut -eq '1 utf-8 1') "#329 sourcing lib/um-api.sh with both variables removed gives the interpreter PYTHONUTF8=1, PYTHONIOENCODING=utf-8 and UTF-8 mode (saw '$modeOut', exit $($mode.Exit))"
+
+            # 14b. #410: this checkout's REAL agy-session-start.sh through the plugin-root hooks.json
+            #      command, run as Antigravity runs it (case 15), against the same server. Antigravity
+            #      parses the hook's stdout as JSON, so it must be ONE line, LF-terminated, with no
+            #      byte-order mark and no carriage return: Python on Windows writes CRLF to a pipe
+            #      unless told otherwise, and the Ubuntu job cannot see that. The search POST gets the
+            #      server's 400 and injects nothing; the state must still arrive.
+            $agyRoot = [System.IO.File]::ReadAllText((Join-Path $pluginRoot 'hooks.json')) | ConvertFrom-Json
+            $agyStart = $agyRoot.'universal-memory'.SessionStart[0].command
+            $payload410 = Join-Path $tmp 'payload410.bin'
+            $projJson = ($proj -replace '\\', '\\')
+            [System.IO.File]::WriteAllBytes($payload410, [System.Text.Encoding]::ASCII.GetBytes('{"conversationId":"conv-410","workspacePaths":["' + $projJson + '"],"transcriptPath":"' + $projJson + '\\none.jsonl","lastUserInput":"what is the state of proj329?"}'))
+            $vars410 = $vars329.Clone()
+            foreach ($k in 'HOME', 'HOMEDRIVE', 'HOMEPATH') { $vars410[$k] = $null }
+            $vars410['USERPROFILE'] = $home329
+            Remove-Item -LiteralPath $serverLog -ErrorAction SilentlyContinue
+            $r = Invoke-Hook 'CMD' $agyStart $payload410 $pluginRoot $vars410
+            $served = if (Test-Path -LiteralPath $serverLog) { ([System.IO.File]::ReadAllText($serverLog) -replace '\s+', ' ').Trim() } else { '' }
+            $bytes = $r.Out
+            $oneLine = ($bytes.Length -gt 2) -and ($bytes[0] -eq 0x7B) -and ($bytes[$bytes.Length - 1] -eq 0x0A) -and
+                       (-not ($bytes -contains [byte]0x0D)) -and ((@($bytes | Where-Object { $_ -eq 0x0A })).Count -eq 1)
+            Check (($r.Exit -eq 0) -and $oneLine) "#410 the real agy-session-start.sh as Antigravity runs it: exit 0, stdout is one LF-terminated line starting with '{', no byte-order mark, no carriage return ($($bytes.Length) bytes, exit $($r.Exit))"
+            $steps = $null
+            try { $steps = ([System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json).injectSteps } catch { $steps = $null }
+            $msg = if ($steps -and (@($steps).Count -eq 1)) { [string]$steps[0].systemMessage.systemMessage } else { '' }
+            Check ($msg.Contains($wantTitle) -and $msg.Contains($wantLine)) "#410 one injectSteps message carrying the state's UTF-8 text unchanged (steps: $(@($steps).Count), message length $($msg.Length))"
+            Check (($served -match 'GET /api/state/proj329') -and ($served -match 'POST /api/search')) "#410 the state fetch and the first-prompt search both reached the fixture server (served: $served)"
+            $log410 = Hook-LogText $home329
+            Check ($log410 -match 'agy-session-start ok sid=conv-410') "#410 the entry script logged its own line under the profile folder's .um (HOME was removed)"
         } finally {
             try { $srv.Kill(); [void]$srv.WaitForExit(5000) } catch { }
         }
     }
+
+    # 15. #410: each command in the plugin-root hooks.json, run the way Antigravity runs a hook on
+    #     Windows (agy 1.5.3, measured 2026-11-09): cmd /c "<command>" with the installed plugin's
+    #     root as the working directory and no HOME in the environment. The command is relative and
+    #     unquoted because any double quote in it breaks under Antigravity. Stub entry scripts:
+    #     stdin reaches the script byte-exact, stdout comes back byte-exact, exit 0, and the script
+    #     sees the profile folder as HOME (the launcher derives it).
+    $agyJson = [System.IO.File]::ReadAllText((Join-Path (Split-Path -Parent $here) 'hooks.json')) | ConvertFrom-Json
+    $agyScripts = @('agy-session-start.sh', 'agy-stop.sh')
+    foreach ($s in $agyScripts) { [System.IO.File]::WriteAllText((Join-Path $fixHooks $s), $stub, $utf8) }
+    $agyVars = With @{ HOME = $null; HOMEDRIVE = $null; HOMEPATH = $null; USERPROFILE = $fakeHome }
+    $agyEvents = @($agyJson.'universal-memory'.PSObject.Properties)
+    Check ($agyEvents.Count -eq 2) "Antigravity hooks.json: two events found ($($agyEvents.Count))"
+    foreach ($event in $agyEvents) {
+        $cmd = $event.Value[0].command
+        $s = ($agyScripts | Where-Object { $cmd -like "*hooks/$_" } | Select-Object -First 1)
+        Reset $s
+        $r = Invoke-Hook 'CMD' $cmd $payloadFile $tmp $agyVars
+        $homeFile = Join-Path $tmp "home-$s.txt"
+        $homeSeen = if (Test-Path -LiteralPath $homeFile) { [System.IO.File]::ReadAllText($homeFile).Trim() } else { '' }
+        Check (($r.Exit -eq 0) -and (Ran $s) -and (Same-Bytes $r.Out $stdoutFixture)) "Antigravity $($event.Name): cmd /c from the plugin root, HOME removed: exit 0, stdin + stdout byte-exact"
+        Check ($homeSeen -eq $fakeHome) "Antigravity $($event.Name): the script sees the profile folder as HOME (saw '$homeSeen')"
+
+        # Control: the same command with ONE backslash in the JSON, which parses to a carriage
+        # return (hooks<CR>un-hook.cmd). It validates and fails silently under Antigravity; this
+        # happened in the third probe run. The case above must be able to fail, so it must here.
+        # Spawned directly: the outer cmd that feeds stdin elsewhere cannot carry a carriage return.
+        Reset $s
+        $broken = $cmd.Replace('hooks\r', ('hooks' + [char]13))
+        $rb = Invoke-Direct 'CMD' $broken $tmp $agyVars
+        Check (($broken -ne $cmd) -and -not (Test-Path -LiteralPath (Received $s))) "Antigravity $($event.Name) control: the single-backslash command never reaches the script through the launcher (exit $($rb.Exit))"
+    }
+
+    # 16. #410: why the Antigravity entry scripts must never exit non-zero. The command is
+    #     <launcher> <script> || bash hooks/<script>; the second half is there for macOS and Linux.
+    #     On Windows a non-zero exit from the first half runs it too, and a bare bash there is the
+    #     WSL launcher or nothing (Git's tool directories are not on this PATH, as under
+    #     Antigravity). What it does differs by machine, so this records it and asserts only that
+    #     something beyond the script ran: more than the script's own stdout, or a complaint on
+    #     stderr.
+    Reset 'agy-stop.sh'
+    $cmd = $agyJson.'universal-memory'.Stop[0].command
+    $r = Invoke-Hook 'CMD' $cmd $payloadFile $tmp (With @{ HOME = $null; HOMEDRIVE = $null; HOMEPATH = $null; USERPROFILE = $fakeHome; STUB_EXIT = '1' })
+    $errSeen = ($r.Err -replace '[^\x20-\x7E]', '' -replace '\s+', ' ').Trim()
+    $secondHalfRan = ($errSeen.Length -gt 0) -or -not (Same-Bytes $r.Out $stdoutFixture)
+    Write-Output ('NOTE: a failing Antigravity entry script runs the second half here: exit ' + $r.Exit + ', ' + $r.Out.Length + ' stdout bytes (the script wrote ' + $stdoutFixture.Length + '), stderr: ' + $errSeen.Substring(0, [Math]::Min(160, $errSeen.Length)))
+    Check ((Ran 'agy-stop.sh') -and $secondHalfRan) 'Antigravity: a script that exits 1 makes cmd run the second half of the command (the reason the entry scripts always exit 0)'
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
     if ($cp0) { try { & $env:ComSpec /d /c "chcp $cp0 >nul" } catch { } }
