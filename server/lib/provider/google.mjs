@@ -33,6 +33,16 @@ export const defaults = {
   factsModel: 'gemini-3.6-flash',
 };
 
+// @google/genai 3.x sends Gemini Developer API calls to v1 unless told otherwise; 2.x sent
+// v1beta. Stay on v1beta, the version every call here has used, so the SDK bump changes
+// nothing on the wire: v1 cannot be tried live while the account's quota is 0 (FIN1), and
+// Google lists model aliases that exist only on v1beta. Set through the SDK's own env
+// variable, not `apiVersion` on our clients, so that mem0's Google embedder and LLM, which
+// build their own client, follow it too. A value the operator exported wins. Pinned by
+// test/provider/google-wire.test.mjs.
+const GEMINI_API_VERSION = 'v1beta';
+process.env.GOOGLE_GENAI_API_VERSION ||= GEMINI_API_VERSION;
+
 export const requires = ['UM_GOOGLE_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY'];
 
 export function resolveApiKey(env) {
