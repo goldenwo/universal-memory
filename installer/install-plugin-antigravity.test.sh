@@ -52,10 +52,31 @@ trap 'rm -rf "$TMPROOT"' EXIT
 # make_fakeagy <file> <calls-file> — a fake `agy` at <file> that appends its
 # argv to <calls-file> and whatever it can read from stdin to
 # <calls-file>.stdin. Exit codes per step come from UM_TEST_AGY_VALIDATE_RC,
-# UM_TEST_AGY_UNINSTALL_RC and UM_TEST_AGY_INSTALL_RC (default 0).
+# UM_TEST_AGY_UNINSTALL_RC, UM_TEST_AGY_INSTALL_RC and UM_TEST_AGY_LIST_RC
+# (default 0). `plugin list` prints UM_TEST_AGY_LIST_OUT when that is set (even
+# to nothing), else <calls-file>.list.json: what agy 1.5.3 printed on Windows
+# with the plugin installed (measured 2026-11-17), version and path changed.
 make_fakeagy() {
   local file="$1" calls="$2"
   mkdir -p "$(dirname "$file")"
+  cat > "$calls.list.json" <<'LIST'
+[
+  {
+    "name": "universal-memory",
+    "enabled": true,
+    "version": "0.0.0",
+    "source": "antigravity",
+    "path": "C:\\Users\\someone\\.gemini\\config\\plugins\\universal-memory",
+    "skills": [
+      "create-adr",
+      "create-remember"
+    ],
+    "hooks": [
+      "universal-memory"
+    ]
+  }
+]
+LIST
   cat > "$file" <<FAKE
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$calls"
@@ -64,6 +85,9 @@ case "\$1 \$2" in
   "plugin validate")  echo "validate says: 2 warnings"; exit "\${UM_TEST_AGY_VALIDATE_RC:-0}" ;;
   "plugin uninstall") exit "\${UM_TEST_AGY_UNINSTALL_RC:-0}" ;;
   "plugin install")   echo "install says: plugin copied"; exit "\${UM_TEST_AGY_INSTALL_RC:-0}" ;;
+  "plugin list")
+    if [ -n "\${UM_TEST_AGY_LIST_OUT+set}" ]; then printf '%s\n' "\$UM_TEST_AGY_LIST_OUT"; else cat "$calls.list.json"; fi
+    exit "\${UM_TEST_AGY_LIST_RC:-0}" ;;
 esac
 exit 0
 FAKE
@@ -110,17 +134,19 @@ if PATH="/usr/bin:/bin" command -v agy >/dev/null 2>&1; then
   exit 1
 fi
 
-# ─── N1: validate, uninstall, install — in that order ────────────────────────
+# ─── N1: validate, uninstall, install, list — in that order ──────────────────
 echo ""
-echo "=== N1: validate, then uninstall, then install ==="
+echo "=== N1: validate, then uninstall, then install, then list ==="
 new_case n1; make_fakeagy "$T/bin/agy" "$CALLS"
 _tx_capture N1 run_installer
 _dump_on_fail N1
 assert_exit_zero "N1: exits 0" "$TX_EXIT_N1"
-assert_eq "N1: the three calls, in order, with the folder and the name" "$(calls)" "plugin validate $PLUGIN_ARG
+assert_eq "N1: the four calls, in order, with the folder and the name" "$(calls)" "plugin validate $PLUGIN_ARG
 plugin uninstall universal-memory
-plugin install $PLUGIN_ARG"
+plugin install $PLUGIN_ARG
+plugin list --json"
 assert_contains "N1: says it is installed" "$TX_OUT_N1" "Antigravity plugin installed"
+assert_contains "N1: says Antigravity lists it, with the version it lists" "$TX_OUT_N1" "agy lists universal-memory 0.0.0"
 assert_contains "N1: says how to remove it" "$TX_OUT_N1" "agy plugin uninstall universal-memory"
 if [ -e "$T/home/.bashrc" ] || [ -e "$T/home/.zshrc" ] || [ -e "$T/home/.profile" ] || [ -e "$T/home/.gemini" ]; then
   fail_test "N1: writes nothing into the home folder itself" "a file appeared in $T/home"
@@ -145,7 +171,7 @@ new_case n3; make_fakeagy "$T/bin/agy" "$CALLS"
 _tx_capture N3 run_installer UM_TEST_AGY_UNINSTALL_RC=1
 _dump_on_fail N3
 assert_exit_zero "N3: exits 0" "$TX_EXIT_N3"
-assert_eq "N3: install still ran" "$(calls | tail -1)" "plugin install $PLUGIN_ARG"
+assert_eq "N3: install still ran" "$(calls | sed -n 3p)" "plugin install $PLUGIN_ARG"
 
 # ─── N4: a failed install says how to finish ─────────────────────────────────
 echo ""
@@ -155,6 +181,7 @@ _tx_capture N4 run_installer UM_TEST_AGY_INSTALL_RC=1
 assert_exit_nonzero "N4: exits non-zero" "$TX_EXIT_N4"
 assert_contains "N4: prints the exact command" "$TX_OUT_N4" "agy plugin install \"$PLUGIN_ARG\""
 assert_contains "N4: says the earlier copy is gone" "$TX_OUT_N4" "was removed"
+assert_eq "N4: a failed install is not followed by a list" "$(calls | grep -c '^plugin list' || true)" "0"
 
 # ─── N5: no Antigravity at all ───────────────────────────────────────────────
 echo ""
@@ -182,9 +209,10 @@ new_case n7; make_fakeagy "$T/localappdata/agy/bin/agy.exe" "$CALLS"
 _tx_capture N7 run_installer
 _dump_on_fail N7
 assert_exit_zero "N7: exits 0" "$TX_EXIT_N7"
-assert_eq "N7: the three calls went to that agy.exe, with the folder as it reads paths" "$(calls)" "plugin validate $PLUGIN_ARG
+assert_eq "N7: the four calls went to that agy.exe, with the folder as it reads paths" "$(calls)" "plugin validate $PLUGIN_ARG
 plugin uninstall universal-memory
-plugin install $PLUGIN_ARG"
+plugin install $PLUGIN_ARG
+plugin list --json"
 
 # ─── N8: agy never reads the installer's stdin ───────────────────────────────
 # Whether `agy plugin install` can ask a question is not known (none was seen).
@@ -199,7 +227,7 @@ _tx_capture N8 run_installer
 STDIN_FILE=/dev/null
 _dump_on_fail N8
 assert_exit_zero "N8: exits 0" "$TX_EXIT_N8"
-assert_eq "N8: all three calls ran" "$(calls | wc -l | tr -d ' ')" "3"
+assert_eq "N8: all four calls ran" "$(calls | wc -l | tr -d ' ')" "4"
 assert_eq "N8: no call read anything from stdin" "$(cat "$CALLS.stdin" 2>/dev/null)" ""
 
 # ─── N9: the plugin folder ───────────────────────────────────────────────────
@@ -211,7 +239,7 @@ _tx_capture N9 run_installer UM_PLUGIN_DIR="$T/other plugin"
 _dump_on_fail N9
 assert_exit_zero "N9: exits 0" "$TX_EXIT_N9"
 assert_eq "N9: installs the folder it was given (a path with a space stays one argument)" \
-  "$(calls | tail -1)" "plugin install $(as_agy_sees "$T/other plugin")"
+  "$(calls | sed -n 3p)" "plugin install $(as_agy_sees "$T/other plugin")"
 new_case n9b; make_fakeagy "$T/bin/agy" "$CALLS"
 rm -rf "$T/plugin/.antigravity-plugin"
 _tx_capture N9B run_installer
@@ -231,7 +259,7 @@ _tx_capture N10 run_default_dir
 _dump_on_fail N10
 assert_exit_zero "N10: exits 0" "$TX_EXIT_N10"
 assert_eq "N10: installs plugins/claude-code/universal-memory" \
-  "$(calls | tail -1)" "plugin install $(as_agy_sees "$REPO_ROOT/plugins/claude-code/universal-memory")"
+  "$(calls | sed -n 3p)" "plugin install $(as_agy_sees "$REPO_ROOT/plugins/claude-code/universal-memory")"
 
 # ─── N11: no saved server address ────────────────────────────────────────────
 # The hooks inject a project's state only when a server address is saved in
@@ -253,6 +281,62 @@ _tx_capture N11B run_installer
 assert_exit_zero "N11: exits 0 with an address saved" "$TX_EXIT_N11B"
 if [[ "$TX_OUT_N11B" != *"--remote"* ]]; then pass "N11: says nothing about it when an address is saved"
 else fail_test "N11: says nothing about it when an address is saved" "the warning was printed"; fi
+
+# ─── N12: the install is confirmed with Antigravity's own list ───────────────
+# `agy plugin install` exiting 0 is the installer's only evidence otherwise.
+# The list is read with white space removed, so the indented form agy prints
+# and a one-line form read the same.
+echo ""
+echo "=== N12: a one-line list is read like the indented one ==="
+new_case n12; make_fakeagy "$T/bin/agy" "$CALLS"
+_tx_capture N12 run_installer UM_TEST_AGY_LIST_OUT='[{"name":"other-plugin","enabled":true,"version":"9.9.9"},{"name":"universal-memory","enabled":true,"version":"1.2.3"}]'
+_dump_on_fail N12
+assert_exit_zero "N12: exits 0" "$TX_EXIT_N12"
+assert_contains "N12: names the version listed for this plugin, not another's" "$TX_OUT_N12" "agy lists universal-memory 1.2.3"
+new_case n12b; make_fakeagy "$T/bin/agy" "$CALLS"
+_tx_capture N12B run_installer UM_TEST_AGY_LIST_OUT='[{"name":"universal-memory","enabled":true}]'
+assert_exit_zero "N12: exits 0 when the entry has no version" "$TX_EXIT_N12B"
+assert_contains "N12: still says it is listed" "$TX_OUT_N12B" "agy lists universal-memory"
+# agy.exe is a Windows program: its lines can end in CR LF.
+new_case n12c; make_fakeagy "$T/bin/agy" "$CALLS"
+_tx_capture N12C run_installer UM_TEST_AGY_LIST_OUT=$'[\r\n  {\r\n    "name": "universal-memory",\r\n    "version": "4.5.6"\r\n  }\r\n]\r'
+assert_exit_zero "N12: exits 0 on CR LF line ends" "$TX_EXIT_N12C"
+assert_contains "N12: reads the entry through CR LF line ends" "$TX_OUT_N12C" "agy lists universal-memory 4.5.6"
+
+# ─── N13: installed, says agy, but its list does not have it ─────────────────
+echo ""
+echo "=== N13: a list without the plugin is a failure ==="
+for _n13 in '[]' \
+            '[{"name":"other-plugin","enabled":true,"version":"9.9.9","hooks":["universal-memory"]}]' \
+            '[{"name":"universal-memory-extra","enabled":true,"version":"9.9.9"}]'; do
+  new_case "n13_$RANDOM"; make_fakeagy "$T/bin/agy" "$CALLS"
+  _tx_capture N13 run_installer UM_TEST_AGY_LIST_OUT="$_n13"
+  assert_exit_nonzero "N13: exits non-zero for $_n13" "$TX_EXIT_N13"
+  assert_contains "N13: says the list does not show it for $_n13" "$TX_OUT_N13" "does not show universal-memory"
+  if [[ "$TX_OUT_N13" != *"Antigravity plugin installed"* ]]; then pass "N13: does not say it is installed for $_n13"
+  else fail_test "N13: does not say it is installed for $_n13" "claimed installed"; fi
+done
+
+# ─── N14: no usable answer from the list ─────────────────────────────────────
+# An agy that has no `plugin list --json`, or prints something this script does
+# not recognise, has still installed the plugin as far as anyone knows. That is
+# said, not failed: unsure never reads as "not installed".
+echo ""
+echo "=== N14: a list that fails or is not recognised is said, not failed ==="
+new_case n14; make_fakeagy "$T/bin/agy" "$CALLS"
+_tx_capture N14 run_installer UM_TEST_AGY_LIST_RC=1
+_dump_on_fail N14
+assert_exit_zero "N14: a failing list still exits 0" "$TX_EXIT_N14"
+assert_contains "N14: a failing list: says it is installed" "$TX_OUT_N14" "Antigravity plugin installed"
+assert_contains "N14: a failing list: says it could not confirm" "$TX_OUT_N14" "Could not confirm"
+for _n14 in '' 'Installed plugins: universal-memory' '{"plugins":[]}'; do
+  new_case "n14_$RANDOM"; make_fakeagy "$T/bin/agy" "$CALLS"
+  _tx_capture N14B run_installer UM_TEST_AGY_LIST_OUT="$_n14"
+  assert_exit_zero "N14: exits 0 for an unrecognised list [$_n14]" "$TX_EXIT_N14B"
+  assert_contains "N14: says it could not confirm for [$_n14]" "$TX_OUT_N14B" "Could not confirm"
+  if [[ "$TX_OUT_N14B" != *"agy lists universal-memory"* ]]; then pass "N14: does not claim it is listed for [$_n14]"
+  else fail_test "N14: does not claim it is listed for [$_n14]" "claimed listed"; fi
+done
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo ""

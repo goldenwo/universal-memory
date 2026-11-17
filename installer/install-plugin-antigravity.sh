@@ -8,8 +8,9 @@
 #   agy plugin validate <folder>
 #   agy plugin uninstall universal-memory     (a failure here is ignored)
 #   agy plugin install <folder>
+#   agy plugin list --json                    (confirms the result)
 #
-# Why three steps. `agy plugin install <folder>` COPIES the folder to
+# Why validate, uninstall, install. `agy plugin install <folder>` COPIES the folder to
 # ~/.gemini/config/plugins/universal-memory (agy 1.5.3, measured 2026-11-09),
 # so an update has to replace that copy: uninstall, then install. Validating
 # first means a folder Antigravity would refuse never removes a working plugin.
@@ -124,7 +125,42 @@ if ! "$_AGY" plugin install "$_PLUGIN_ARG" </dev/null; then
   exit 1
 fi
 
-ok "Antigravity plugin installed. It takes effect in the next conversation; nothing else to set up."
+# Ask Antigravity what it has now. `agy plugin list --json` prints an array of
+# objects, one per plugin, each with a "name" (agy 1.5.3 on Windows, measured
+# 2026-11-17; an empty list is []). White space is removed first, so the
+# indented form agy prints and a one-line form read the same. Three outcomes:
+#   yes      an entry named universal-memory
+#   no       [] or entries with other names: the install said yes and the list
+#            says no, which is a failure
+#   unknown  the call failed or printed something else. Said, not failed: as
+#            far as anyone knows the plugin is installed.
+_listed="unknown"
+_list_out=""
+if _list_out=$("$_AGY" plugin list --json </dev/null 2>/dev/null); then
+  _list_flat=$(printf '%s' "$_list_out" | tr -d '[:space:]')
+  case "$_list_flat" in
+    *'"name":"universal-memory"'*) _listed="yes" ;;
+    '[]'|'['*'"name":"'*) _listed="no" ;;
+  esac
+fi
+
+if [ "$_listed" = "no" ]; then
+  warn "agy plugin install reported success, but \`agy plugin list --json\` does not show universal-memory. To see what Antigravity has, and to try again:"
+  warn "  agy plugin list"
+  warn "  agy plugin install \"$_PLUGIN_ARG\""
+  exit 1
+fi
+
+if [ "$_listed" = "yes" ]; then
+  # The version Antigravity lists for this entry, when it lists one.
+  _listed_ver=""
+  _ver_re='"name":"universal-memory"[^{}]*"version":"([A-Za-z0-9.+_-]+)"'
+  if [[ "$_list_flat" =~ $_ver_re ]]; then _listed_ver=" ${BASH_REMATCH[1]}"; fi
+  ok "Antigravity plugin installed: agy lists universal-memory${_listed_ver}. It takes effect in the next conversation; nothing else to set up."
+else
+  ok "Antigravity plugin installed. It takes effect in the next conversation; nothing else to set up."
+  warn "Could not confirm it: \`agy plugin list --json\` gave no answer this script recognises. \`agy plugin list\` shows what Antigravity has."
+fi
 ok "After a universal-memory update, run this again. To remove it: agy plugin uninstall universal-memory"
 
 # UM_SERVER_URL in this shell does not count: agy's hooks run in their own
