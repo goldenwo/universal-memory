@@ -294,6 +294,13 @@ assert_not_contains "H3: no state body" "$MSG" "STATE-BODY-MARKER"
 assert_eq "H3: no network call" "$(call_count)" "0"
 
 echo "=== H4: unusable input ==="
+# agy-stop.sh's own skips happen before stop.sh runs, so stop.sh's anomaly
+# self-report (#267) never sees them. The reasons stop.sh reports for the same
+# condition (empty-stdin, bad-stdin, and no-python in H4b) are reported from
+# agy-stop.sh: one POST to /api/capture-anomaly and no turn. no-workspace is
+# not reported: stop.sh treats a Stop outside any project as an ordinary skip,
+# and how often Antigravity sends no workspace is not measured. Session start
+# reports nothing: the report is about capture.
 H=$(fresh_home h4)
 for script in "$SS" "$ST"; do
   name=$(basename "$script" .sh)
@@ -307,9 +314,38 @@ for script in "$SS" "$ST"; do
     assert_eq "H4: $name $reason exit 0" "$RUN_EXIT" "0"
     assert_eq "H4: $name $reason prints {}" "$RUN_OUT" "{}"
     assert_eq "H4: $name $reason logs one skip line" "$(grep -c "$name skip=$reason" "$H/.um/hook.log" 2>/dev/null)" "1"
-    assert_eq "H4: $name $reason makes no network call" "$(call_count)" "0"
+    if [ "$name" = "agy-stop" ] && [ "$reason" != "no-workspace" ]; then
+      assert_eq "H4: $name $reason sends one anomaly report" "$(url_count /api/capture-anomaly)" "1"
+      assert_eq "H4: $name $reason makes no other call" "$(call_count)" "1"
+      assert_eq "H4: $name $reason names the reason and no project" "$(cat "$CAP_DIR/body_1" 2>/dev/null)" "{\"reason\":\"$reason\"}"
+      assert_contains "H4: $name $reason logs that the report was sent" "$(cat "$H/.um/hook.log" 2>/dev/null)" "$name skip=$reason signal=sent"
+    else
+      assert_eq "H4: $name $reason makes no network call" "$(call_count)" "0"
+    fi
   done
 done
+
+echo "=== H4b: stop with no python ==="
+# The report is bash and curl only, so it still goes out.
+NOPY_BIN="$TMPDIR_ROOT/nopy_bin"
+mkdir -p "$NOPY_BIN"
+for stub in py python3 python; do
+  printf '#!/bin/bash\nexit 1\n' > "$NOPY_BIN/$stub"
+  chmod +x "$NOPY_BIN/$stub"
+done
+H=$(fresh_home h4b)
+reset_calls
+H4B_STDIN=$(agy_stdin "$ST_FIX" "$NO_TRANSCRIPT")
+RUN_EXIT=0
+RUN_OUT=$(env -u CLAUDE_CWD -u UM_ENDPOINT -u UM_COMPOSE_DIR HOME="$H" PATH="$NOPY_BIN:$MOCK_BIN:$PATH" \
+  UM_SERVER_URL="http://mock.example:6335" UM_TOKEN_FILE="$H/.um/auth-token" \
+  bash "$ST" <<< "$H4B_STDIN" 2>/dev/null) || RUN_EXIT=$?
+assert_eq "H4b: exit 0" "$RUN_EXIT" "0"
+assert_eq "H4b: prints {}" "$RUN_OUT" "{}"
+assert_eq "H4b: sends one anomaly report" "$(url_count /api/capture-anomaly)" "1"
+assert_eq "H4b: makes no other call" "$(call_count)" "1"
+assert_eq "H4b: names the reason and no project" "$(cat "$CAP_DIR/body_1" 2>/dev/null)" '{"reason":"no-python"}'
+assert_contains "H4b: logs that the report was sent" "$(cat "$H/.um/hook.log" 2>/dev/null)" "agy-stop skip=no-python signal=sent"
 
 echo "=== H5: a prompt too short to search ==="
 H=$(fresh_home h5)
