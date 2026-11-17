@@ -3,6 +3,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL="$SCRIPT_DIR/install.sh"
+# Hide this machine's Antigravity from every case: install.sh and the wizard
+# count agy.exe under %LOCALAPPDATA%\agy\bin as Antigravity present (see
+# install.test.sh).
+export LOCALAPPDATA=/nonexistent/um-test-localappdata
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
 

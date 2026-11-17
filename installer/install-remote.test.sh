@@ -20,6 +20,9 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALLER="$SCRIPT_DIR/install.sh"
+# Hide this machine's Antigravity from every case: install.sh counts agy.exe
+# under %LOCALAPPDATA%\agy\bin as Antigravity present (see install.test.sh).
+export LOCALAPPDATA=/nonexistent/um-test-localappdata
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")"
 VERIFY_LIB="$REPO_ROOT/plugins/claude-code/universal-memory/hooks/lib/verify-endpoint.sh"
 
