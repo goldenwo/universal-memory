@@ -32,10 +32,17 @@ wizard_detect_env() {
   # A Codex home without the CLI still counts; the installer then prints the commands.
   DETECTED_CODEX_CLI=$(command -v codex >/dev/null 2>&1 && echo 1 || echo 0)
   DETECTED_CODEX=$([[ $DETECTED_CODEX_CLI -eq 1 || -d "${CODEX_HOME:-$HOME/.codex}" ]] && echo 1 || echo 0)
-  # Antigravity: its CLI, or its data folder alone (the installer then finds
-  # agy.exe under %LOCALAPPDATA% on Windows, or prints the commands).
+  # Antigravity: its CLI on PATH, agy.exe where its Windows installer puts it,
+  # or its data folder alone (the installer then prints the commands). The
+  # same three cases as _antigravity_present in install.sh.
   DETECTED_ANTIGRAVITY_CLI=$(command -v agy >/dev/null 2>&1 && echo 1 || echo 0)
-  DETECTED_ANTIGRAVITY=$([[ $DETECTED_ANTIGRAVITY_CLI -eq 1 || -d "$HOME/.gemini/antigravity-cli" ]] && echo 1 || echo 0)
+  DETECTED_ANTIGRAVITY_EXE=0
+  if [[ -n "${LOCALAPPDATA:-}" ]]; then
+    local _agy_base="$LOCALAPPDATA"
+    if command -v cygpath >/dev/null 2>&1; then _agy_base=$(cygpath -u "$LOCALAPPDATA"); fi
+    [[ -x "$_agy_base/agy/bin/agy.exe" ]] && DETECTED_ANTIGRAVITY_EXE=1
+  fi
+  DETECTED_ANTIGRAVITY=$([[ $DETECTED_ANTIGRAVITY_CLI -eq 1 || $DETECTED_ANTIGRAVITY_EXE -eq 1 || -d "$HOME/.gemini/antigravity-cli" ]] && echo 1 || echo 0)
   DETECTED_PYTHON3=$(command -v python3 >/dev/null 2>&1 && echo 1 || echo 0)
   # From / so a yaml.py in the working directory is not imported (and run).
   DETECTED_PYYAML=$( (cd / && python3 -c 'import yaml') 2>/dev/null && echo 1 || echo 0)
@@ -48,7 +55,8 @@ wizard_detect_env() {
   elif [[ $DETECTED_CODEX -eq 1 ]]; then echo "  ✓ ~/.codex (Codex; its CLI is not on PATH, so the install prints the commands)"
   else echo "  ✗ Codex not found — will skip"; fi
   if [[ $DETECTED_ANTIGRAVITY_CLI -eq 1 ]]; then echo "  ✓ Antigravity (agy CLI)"
-  elif [[ $DETECTED_ANTIGRAVITY -eq 1 ]]; then echo "  ✓ ~/.gemini/antigravity-cli (Antigravity; agy is not on PATH, so the install looks for it or prints the commands)"
+  elif [[ $DETECTED_ANTIGRAVITY_EXE -eq 1 ]]; then echo "  ✓ Antigravity (agy.exe under %LOCALAPPDATA%; it is not on PATH)"
+  elif [[ $DETECTED_ANTIGRAVITY -eq 1 ]]; then echo "  ✓ ~/.gemini/antigravity-cli (Antigravity; agy was not found, so the install prints the commands)"
   else echo "  ✗ Antigravity not found — will skip"; fi
   [[ $DETECTED_PYTHON3 -eq 1 ]] && echo "  ✓ python3" || echo "  ✗ python3 not found (required for the server and \`um\` CLI)"
   [[ $DETECTED_PYYAML -eq 1 ]] && echo "  ✓ python3-yaml" || echo "  ✗ python3-yaml not found (required for the server and \`um\` CLI)"

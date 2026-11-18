@@ -15,7 +15,7 @@
 #
 # The same two guarantees as agy-session-start.sh: always exit 0 with one line
 # of JSON, and one log line of its own per run (`agy-stop ok sid=<id>` or
-# `agy-stop skip=<reason>`).
+# `agy-stop skip=<reason>`, with ` signal=<result>` when the skip was reported).
 
 set -uo pipefail
 
@@ -29,21 +29,26 @@ source "$SCRIPT_DIR/lib/agy.sh"
 trap 'printf "{}\n"; exit 0' EXIT
 trap 'exit 0' HUP INT TERM
 
+# These skips end the run before stop.sh starts, so stop.sh's anomaly
+# self-report (#267) never sees them. The three stop.sh reports for the same
+# condition are reported from here, with the same reason and no project.
+# no-workspace is not: stop.sh treats a Stop outside any project as an
+# ordinary skip, and how often Antigravity sends no workspace is not measured.
 RAW=$(cat)
 # A pattern match, not ${RAW//[[:space:]]/}: see agy-session-start.sh.
 case "$RAW" in
   *[![:space:]]*) ;;
-  *) um_log "skip=empty-stdin"; exit 0 ;;
+  *) um_log "skip=empty-stdin signal=$(um_signal_anomaly empty-stdin)"; exit 0 ;;
 esac
 
-PY=$(um_find_python) || { um_log "skip=no-python"; exit 0; }
+PY=$(um_find_python) || { um_log "skip=no-python signal=$(um_signal_anomaly no-python)"; exit 0; }
 
 TRANSLATE_RC=0
 TRANSLATED=$(printf '%s' "$RAW" | um_agy_to_claude) || TRANSLATE_RC=$?
 case "$TRANSLATE_RC" in
   0) ;;
   2) um_log "skip=no-workspace"; exit 0 ;;
-  *) um_log "skip=bad-stdin"; exit 0 ;;
+  *) um_log "skip=bad-stdin signal=$(um_signal_anomaly bad-stdin)"; exit 0 ;;
 esac
 
 printf '%s' "$TRANSLATED" | bash "$SCRIPT_DIR/stop.sh" >/dev/null 2>&1 || true

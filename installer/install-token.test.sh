@@ -30,6 +30,9 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirna
 
 # shellcheck source=installer/lib/test-harness.sh
 source "$REPO_ROOT/installer/lib/test-harness.sh"
+# Hide this machine's Antigravity from every case: install.sh counts agy.exe
+# under %LOCALAPPDATA%\agy\bin as Antigravity present (see install.test.sh).
+export LOCALAPPDATA=/nonexistent/um-test-localappdata
 
 PASS=0
 FAIL=0

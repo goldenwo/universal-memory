@@ -136,7 +136,7 @@ Antigravity's CLI loads the same plugin folder, through two hooks of its own. Fr
 bash installer/install.sh --plugin-antigravity
 ```
 
-That hands the plugin folder to Antigravity (`agy plugin validate`, then `agy plugin uninstall universal-memory`, then `agy plugin install`); a full `--yes` install does the same when it finds Antigravity. There is nothing to trust afterwards. From the next conversation, the project's state and the memories that match your first prompt are injected when the conversation starts, and each turn is captured as it ends.
+That hands the plugin folder to Antigravity (`agy plugin validate`, then `agy plugin uninstall universal-memory`, then `agy plugin install`) and checks that `agy plugin list --json` now shows it; a full `--yes` install does the same when it finds Antigravity. There is nothing to trust afterwards. From the next conversation, the project's state and the memories that match your first prompt are injected when the conversation starts, and each turn is captured as it ends.
 
 What to know:
 

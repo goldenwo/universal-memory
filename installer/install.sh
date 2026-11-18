@@ -309,12 +309,23 @@ _codex_present() {
   command -v codex >/dev/null 2>&1 || [[ -d "${CODEX_HOME:-${HOME:-}/.codex}" ]]
 }
 
-# Antigravity counts as present with its CLI on PATH, or with its data folder
-# alone: on Windows `agy` is usually not on Git Bash's PATH, and
-# install-plugin-antigravity.sh finds it under %LOCALAPPDATA% or prints the
-# commands. Nothing else counts (~/.gemini alone is the Gemini CLI's too).
+# _agy_under_localappdata — rc 0 when agy.exe sits where its Windows installer
+# puts it. Git Bash's PATH usually lacks that folder. The same lookup as
+# _find_agy in install-plugin-antigravity.sh and wizard_detect_env; this file
+# can run with no checkout beside it, so the three cannot share one.
+_agy_under_localappdata() {
+  [[ -n "${LOCALAPPDATA:-}" ]] || return 1
+  local base="$LOCALAPPDATA"
+  if command -v cygpath >/dev/null 2>&1; then base=$(cygpath -u "$LOCALAPPDATA"); fi
+  [[ -x "$base/agy/bin/agy.exe" ]]
+}
+
+# Antigravity counts as present with its CLI (on PATH, or agy.exe under
+# %LOCALAPPDATA%), or with its data folder alone (install-plugin-antigravity.sh
+# then prints the commands). These are the cases that script acts on. Nothing
+# else counts (~/.gemini alone is the Gemini CLI's too).
 _antigravity_present() {
-  command -v agy >/dev/null 2>&1 || [[ -d "${HOME:-}/.gemini/antigravity-cli" ]]
+  command -v agy >/dev/null 2>&1 || _agy_under_localappdata || [[ -d "${HOME:-}/.gemini/antigravity-cli" ]]
 }
 
 # ─── Prerequisites check ──────────────────────────────────────────────────────
@@ -611,7 +622,7 @@ if [[ $INSTALL_PLUGIN_CODEX -eq 1 ]]; then
 fi
 if [[ $INSTALL_PLUGIN_ANTIGRAVITY -eq 1 ]]; then
   if ! _antigravity_present; then
-    echo "[install] Antigravity not found (no agy CLI, no ~/.gemini/antigravity-cli) — soft-skipping Antigravity plugin" >&2
+    echo "[install] Antigravity not found (no agy on PATH or under %LOCALAPPDATA%, no ~/.gemini/antigravity-cli) — soft-skipping Antigravity plugin" >&2
   else
     _delegate "installer/install-plugin-antigravity.sh" ${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
   fi

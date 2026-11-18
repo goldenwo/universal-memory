@@ -12,6 +12,11 @@ set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALLER="$SCRIPT_DIR/install.sh"
+# Hide this machine's Antigravity from every case. install.sh counts agy.exe
+# under %LOCALAPPDATA%\agy\bin as Antigravity present, so a case that inherits
+# the real variable tests this machine, and one that is not a dry run could
+# reach its real agy.exe. The Antigravity cases set their own.
+export LOCALAPPDATA=/nonexistent/um-test-localappdata
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")"
 
 # shellcheck source=installer/lib/test-harness.sh
@@ -294,6 +299,32 @@ _tx_capture TA5 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA5/repo" \
   bash "$INSTALLER" --interactive
 if echo "$TX_OUT_TA5" | grep -q "✓ Antigravity (agy CLI)"; then pass "T-AGY-5: wizard reports Antigravity detected"; else fail "T-AGY-5: wizard did not detect Antigravity (got: $TX_OUT_TA5)"; fi
 rm -rf "$TA5"
+
+echo ""
+echo "=== T-AGY-6: agy.exe only under LOCALAPPDATA → present, as the sub-installer sees it ==="
+# install-plugin-antigravity.sh uses an agy.exe under %LOCALAPPDATA%\agy\bin
+# when none is on PATH (its N7). The dispatcher and the wizard have to call the
+# same machine "present": Antigravity installed on Windows and never run has no
+# data folder yet, and install.sh would skip what the sub-installer installs.
+TA6=$(mktemp -d)
+make_stubs "$TA6/bin"
+mkdir -p "$TA6/localappdata/agy/bin"
+printf '#!/bin/sh\nexit 0\n' > "$TA6/localappdata/agy/bin/agy.exe"; chmod +x "$TA6/localappdata/agy/bin/agy.exe"
+_tx_capture TA6 env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA6/repo" \
+  PATH="$TA6/bin:/usr/bin:/bin" HOME="$TA6/fakehome" LOCALAPPDATA="$TA6/localappdata" \
+  bash "$INSTALLER" --plugin-antigravity
+if echo "$TX_OUT_TA6" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "T-AGY-6: --plugin-antigravity delegates"; else fail "T-AGY-6: not delegated (got: $TX_OUT_TA6)"; fi
+if ! echo "$TX_OUT_TA6" | grep -q "soft-skipping Antigravity"; then pass "T-AGY-6: no soft-skip"; else fail "T-AGY-6: soft-skipped with agy.exe under LOCALAPPDATA"; fi
+_tx_capture TA6A env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA6/repo" \
+  PATH="$TA6/bin:/usr/bin:/bin" HOME="$TA6/fakehome" LOCALAPPDATA="$TA6/localappdata" \
+  bash "$INSTALLER" --all
+if echo "$TX_OUT_TA6A" | grep -q "delegate: installer/install-plugin-antigravity.sh"; then pass "T-AGY-6: --all delegates it"; else fail "T-AGY-6: --all did not delegate (got: $TX_OUT_TA6A)"; fi
+_tx_capture TA6W env UM_DRY_RUN=1 UM_INSTALL_DIR="$TA6/repo" \
+  PATH="$TA6/bin:/usr/bin:/bin" HOME="$TA6/fakehome" LOCALAPPDATA="$TA6/localappdata" \
+  bash "$INSTALLER" --interactive
+if echo "$TX_OUT_TA6W" | grep -q "✓ Antigravity (agy.exe under"; then pass "T-AGY-6: the wizard reports Antigravity detected"; else fail "T-AGY-6: wizard did not detect it (got: $TX_OUT_TA6W)"; fi
+if ! echo "$TX_OUT_TA6W" | grep -q "Antigravity not found"; then pass "T-AGY-6: the wizard does not say it will skip"; else fail "T-AGY-6: wizard says not found"; fi
+rm -rf "$TA6"
 
 # ─── T-FLAGS-7: --plugin-cc + --cli → two delegations ───────────────────────
 echo ""
