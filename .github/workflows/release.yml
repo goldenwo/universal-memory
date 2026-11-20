@@ -20,8 +20,13 @@ env:
 # Three jobs: `prepare` derives the tags and labels once, `build` builds each
 # architecture on a runner of that architecture and pushes it WITHOUT a tag,
 # `publish` joins the two under the release tags. No tag moves unless both
-# builds passed. A failed run can leave one untagged single-architecture
-# image in the registry; nothing that pulls by tag sees it.
+# builds passed. The legs' by-digest pushes stay in the registry untagged
+# whether or not the run succeeds; nothing that pulls by tag sees them.
+#
+# "Re-run failed jobs" rebuilds only the failed leg; the other leg's image is
+# the one built earlier. The Dockerfile's base image is a floating tag, so
+# after a gap the two architectures can sit on different Node patch
+# versions. Use "Re-run all jobs" unless the re-run follows straight away.
 #
 # Why per-architecture runners: one x64 runner used to build both and ran the
 # arm64 half under QEMU. That half died with "Illegal instruction" early in
@@ -92,11 +97,10 @@ jobs:
           labels: ${{ needs.prepare.outputs.labels }}
           # Pushed by digest, with no tag: `publish` applies the tags.
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          # GHA-native build cache — speeds up subsequent releases. One
-          # scope per architecture, so the two legs do not overwrite each
-          # other's cache.
-          cache-from: type=gha,scope=release-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=release-${{ matrix.arch }}
+          # No build cache: a run on one tag cannot read a cache written by
+          # a run on another tag, so it only ever served a re-run of the same
+          # tag. (v1.31.0 imported a cache manifest and still ran `npm ci`
+          # in full for both architectures.)
 
       - name: Record the digest
         id: digest
@@ -161,14 +165,6 @@ jobs:
             fi
           done
           docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-
-      # Read back what the registry now serves, for the run log.
-      - name: Show the published tags
-        run: |
-          set -euo pipefail
-          while IFS= read -r tag; do
-            if [ -n "$tag" ]; then docker buildx imagetools inspect "$tag"; fi
-          done <<< "$TAGS"
 
       # NOTE: `install-cli.sh` was previously uploaded as a release asset for
       # curl|bash install flows. That URL is unusable because the script needs
