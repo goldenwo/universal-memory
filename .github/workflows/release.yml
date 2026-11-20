@@ -14,17 +14,69 @@ permissions:
   contents: read      # needed for actions/checkout to fetch the tag
   packages: write     # needed to push to GHCR
 
+env:
+  IMAGE: ghcr.io/goldenwo/universal-memory-server
+
+# Three jobs: `prepare` derives the tags and labels once, `build` builds each
+# architecture on a runner of that architecture and pushes it WITHOUT a tag,
+# `publish` joins the two under the release tags. No tag moves unless both
+# builds passed. The legs' by-digest pushes stay in the registry untagged
+# whether or not the run succeeds; nothing that pulls by tag sees them.
+#
+# "Re-run failed jobs" rebuilds only the failed leg; the other leg's image is
+# the one built earlier. The Dockerfile's base image is a floating tag, so
+# after a gap the two architectures can sit on different Node patch
+# versions. Use "Re-run all jobs" unless the re-run follows straight away.
+#
+# Why per-architecture runners: one x64 runner used to build both and ran the
+# arm64 half under QEMU. That half died with "Illegal instruction" early in
+# `npm ci` on the first attempt of v1.28.2 and v1.30.1, and the nightly
+# arm64 build of the same Dockerfile failed 15 of 98 times between
+# 2026-08-18 and 2026-11-19 (the 12 logs read show the same crash). Native
+# also means the Dockerfile's post-prune gate loads the better-sqlite3
+# binding on real hardware of each architecture.
 jobs:
-  image:
-    name: build + push multi-arch image
+  prepare:
+    name: derive image tags + labels
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+    steps:
+      - name: Derive image tags + labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          # v0.1.2 -> tags: 0.1.2, 0.1, latest (prereleases skip latest)
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+  build:
+    name: build ${{ matrix.arch }} image (native)
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          # Same label as nightly.yml's arm64-image-build — keep the two in
+          # step, so the nightly stays the pre-tag signal for this leg.
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+    # One output per architecture: each leg sets only its own, and an output
+    # a leg leaves empty does not override the other leg's value.
+    outputs:
+      amd64: ${{ steps.digest.outputs.amd64 }}
+      arm64: ${{ steps.digest.outputs.arm64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU (for cross-arch builds)
-        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker buildx
         uses: docker/setup-buildx-action@v4
@@ -36,31 +88,83 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Derive image tags + labels
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/goldenwo/universal-memory-server
-          # v0.1.2 -> tags: 0.1.2, 0.1, latest (prereleases skip latest)
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
-
-      - name: Build and push (amd64 + arm64)
+      - name: Build and push by digest (${{ matrix.arch }})
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: server
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # GHA-native build cache — speeds up subsequent releases.
-          # Note: GHA cache is keyed per-platform; multi-arch cache
-          # may miss for one arch while hitting the other. That's
-          # acceptable for v0.1.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          # Pushed by digest, with no tag: `publish` applies the tags.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # No build cache: a run on one tag cannot read a cache written by
+          # a run on another tag, so it only ever served a re-run of the same
+          # tag. (v1.31.0 imported a cache manifest and still ran `npm ci`
+          # in full for both architectures.)
+
+      - name: Record the digest
+        id: digest
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          case "$DIGEST" in
+            sha256:*) ;;
+            *) echo "::error::the $ARCH build reported no image digest"; exit 1 ;;
+          esac
+          echo "$ARCH=$DIGEST" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: publish multi-arch image
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAGS: ${{ needs.prepare.outputs.tags }}
+      AMD64_DIGEST: ${{ needs.build.outputs.amd64 }}
+      ARM64_DIGEST: ${{ needs.build.outputs.arm64 }}
+    steps:
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The joined image is composed with --dry-run first (nothing is pushed)
+      # and must list exactly one image per architecture before any tag
+      # moves: two legs handing over the same digest would otherwise publish
+      # a one-architecture image under the release tags.
+      - name: Join both architectures under the release tags
+        run: |
+          set -euo pipefail
+          for digest in "$AMD64_DIGEST" "$ARM64_DIGEST"; do
+            case "$digest" in
+              sha256:*) ;;
+              *) echo "::error::a build leg handed over no digest (amd64='$AMD64_DIGEST' arm64='$ARM64_DIGEST')"; exit 1 ;;
+            esac
+          done
+          tag_args=()
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then tag_args+=(-t "$tag"); fi
+          done <<< "$TAGS"
+          if [ "${#tag_args[@]}" -eq 0 ]; then
+            echo "::error::no release tags were derived"
+            exit 1
+          fi
+          sources=("$IMAGE@$AMD64_DIGEST" "$IMAGE@$ARM64_DIGEST")
+          docker buildx imagetools create --dry-run "${tag_args[@]}" "${sources[@]}" > index.json
+          for arch in amd64 arm64; do
+            count=$(jq --arg arch "$arch" '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == $arch)] | length' index.json)
+            if [ "$count" != "1" ]; then
+              echo "::error::the joined image would list $count linux/$arch images, expected 1; no tag was moved"
+              exit 1
+            fi
+          done
+          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
 
       # NOTE: `install-cli.sh` was previously uploaded as a release asset for
       # curl|bash install flows. That URL is unusable because the script needs
