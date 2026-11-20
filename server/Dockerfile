@@ -90,9 +90,9 @@ try { import.meta.resolve('mem0ai/oss'); } catch (e) { console.error('FAIL post-
 /* #255: LOAD the native binding, not just existsSync — prune damage to the */ \
 /* .node prebuild is invisible to existence checks (the v1.8.0 class), and */ \
 /* better-sqlite3 13.x moved missing-prebuild failures from npm ci to */ \
-/* require() time. Under QEMU this runs on the arm64 legs: nightly's */ \
-/* build-only job (standing pre-tag signal) and release.yml's multi-arch */ \
-/* push — so both arches prove the ABI-127 musl binding at build time. */ \
+/* require() time. Each arch builds on a runner of that arch: nightly's */ \
+/* arm64 build-only job (standing pre-tag signal) and release.yml's two */ \
+/* build legs — so both arches prove the ABI-127 musl binding natively. */ \
 try { \
   const { default: Database } = await import('better-sqlite3'); \
   const db = new Database(':memory:'); \
