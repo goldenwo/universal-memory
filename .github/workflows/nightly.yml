@@ -232,13 +232,18 @@ jobs:
   # release.yml's tag-triggered multi-arch push — a release-blocking
   # failure mode with zero pre-tag signal (the #211 split-gate shape).
   # Build-only, no push, no secrets.
+  #
+  # Runs on an arm64 runner, the same label as release.yml's arm64 leg —
+  # keep the two in step, so this job stays the pre-tag signal for what the
+  # release builds. Under QEMU on an x64 runner it failed 15 of 98 nightlies
+  # between 2026-08-18 and 2026-11-19; the 12 logs read all show
+  # "Illegal instruction" early in `npm ci`.
   arm64-image-build:
-    name: arm64 image build (QEMU, build-only)
-    runs-on: ubuntu-latest
+    name: arm64 image build (native, build-only)
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: Build arm64 (no push)
         run: docker buildx build --platform linux/arm64 server
