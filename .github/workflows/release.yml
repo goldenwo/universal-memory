@@ -2,6 +2,8 @@ name: release
 
 # Trigger only on semver tag push (v0.1.2, v1.0.0-rc.1, etc.).
 # We don't run on main pushes — only tags produce images.
+# The pattern also matches tags that are not versions (v1.2.3.4); the
+# `prepare` job refuses those before anything is built.
 on:
   push:
     tags: ['v*.*.*']
@@ -54,6 +56,23 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      # A tag that is not a valid version derives no version tag: v1.2.3.4
+      # would publish `latest` and nothing else. So this run's own version
+      # must be among the derived tags, or the run stops here, before the
+      # `build` job pushes anything.
+      - name: Refuse a tag that is not a version
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          want="$IMAGE:${REF_NAME#v}"
+          if ! grep -Fxq -- "$want" <<< "$TAGS"; then
+            echo "::error::tag '$REF_NAME' is not a version (vX.Y.Z or vX.Y.Z-pre): this run would not publish '$want'. Nothing was built or pushed."
+            echo "Tags derived from it:"
+            echo "${TAGS:-(none)}"
+            exit 1
+          fi
 
   build:
     name: build ${{ matrix.arch }} image (native)
